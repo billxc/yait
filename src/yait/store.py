@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import Issue, Milestone, Template
+from .models import Issue, Milestone, Template, Doc
 
 YAIT_DIR = ".yait"
 ISSUES_DIR = "issues"
@@ -32,9 +32,14 @@ def _config_path(root: Path) -> Path:
     return _yait_root(root) / CONFIG_FILE
 
 
+def _docs_dir(root: Path) -> Path:
+    return _yait_root(root) / "docs"
+
+
 def init_store(root: Path) -> None:
     _issues_dir(root).mkdir(parents=True, exist_ok=True)
     _templates_dir(root).mkdir(parents=True, exist_ok=True)
+    _docs_dir(root).mkdir(parents=True, exist_ok=True)
     cfg = _config_path(root)
     if not cfg.exists():
         cfg.write_text(yaml.dump({"version": 1, "next_id": 1}, default_flow_style=False))
@@ -88,6 +93,7 @@ def save_issue(root: Path, issue: Issue) -> None:
         "milestone": issue.milestone,
         "created_at": issue.created_at,
         "updated_at": issue.updated_at,
+        "docs": issue.docs,
     }
     text = "---\n" + yaml.dump(fm, default_flow_style=False).rstrip("\n") + "\n---\n"
     if issue.body:
@@ -118,6 +124,7 @@ def load_issue(root: Path, issue_id: int) -> Issue:
         created_at=fm.get("created_at", ""),
         updated_at=fm.get("updated_at", ""),
         body=body,
+        docs=fm.get("docs") or [],
     )
 
 
@@ -237,6 +244,7 @@ def delete_milestone(root: Path, name: str, force: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Template CRUD
 # ---------------------------------------------------------------------------
 
@@ -305,4 +313,66 @@ def delete_template(root: Path, name: str) -> None:
         raise FileNotFoundError(
             f"Template '{name}' not found. Available: {avail_str}"
         )
+    path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Doc CRUD
+# ---------------------------------------------------------------------------
+
+
+def _doc_path(root: Path, slug: str) -> Path:
+    return _docs_dir(root) / f"{slug}.md"
+
+
+def save_doc(root: Path, doc: Doc) -> None:
+    fm = {
+        "slug": doc.slug,
+        "title": doc.title,
+        "created_at": doc.created_at,
+        "updated_at": doc.updated_at,
+    }
+    text = "---\n" + yaml.dump(fm, default_flow_style=False).rstrip("\n") + "\n---\n"
+    if doc.body:
+        text += "\n" + doc.body + "\n"
+    _doc_path(root, doc.slug).write_text(text)
+
+
+def load_doc(root: Path, slug: str) -> Doc:
+    path = _doc_path(root, slug)
+    if not path.exists():
+        raise FileNotFoundError(f"Doc '{slug}' not found")
+    text = path.read_text()
+    if not text.startswith("---\n"):
+        raise ValueError(f"Doc '{slug}': missing frontmatter opening delimiter")
+    end_idx = text.index("---\n", 4)
+    fm_text = text[4:end_idx]
+    body = text[end_idx + 4:].strip()
+    fm = yaml.safe_load(fm_text)
+    return Doc(
+        slug=fm.get("slug", slug),
+        title=fm.get("title", ""),
+        created_at=fm.get("created_at", ""),
+        updated_at=fm.get("updated_at", ""),
+        body=body,
+    )
+
+
+def list_docs(root: Path) -> list[Doc]:
+    docs_path = _docs_dir(root)
+    if not docs_path.exists():
+        return []
+    docs = []
+    for p in sorted(docs_path.glob("*.md")):
+        try:
+            docs.append(load_doc(root, p.stem))
+        except (ValueError, FileNotFoundError):
+            continue
+    return docs
+
+
+def delete_doc(root: Path, slug: str) -> None:
+    path = _doc_path(root, slug)
+    if not path.exists():
+        raise FileNotFoundError(f"Doc '{slug}' not found")
     path.unlink()
