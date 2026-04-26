@@ -16,12 +16,13 @@ import yaml
 
 from . import __version__
 from .git_ops import git_commit, git_log, is_git_repo
-from .models import ISSUE_TYPES, PRIORITIES, MILESTONE_STATUSES, Issue, Milestone, Template, Doc, _SLUG_RE
+from .models import ISSUE_TYPES, PRIORITIES, MILESTONE_STATUSES, LINK_TYPES, LINK_REVERSE, Issue, Milestone, Template, Doc, _SLUG_RE
 from .store import (
     init_store, is_initialized, list_issues, load_issue, next_id, save_issue, delete_issue,
     save_milestone, load_milestone, list_milestones, update_milestone, delete_milestone,
     save_template, load_template, list_templates, delete_template,
     save_doc, load_doc, list_docs, delete_doc, _docs_dir,
+    add_link, remove_link,
 )
 
 
@@ -291,7 +292,21 @@ def show(id, as_json):
     _require_init(root)
     issue = _load_or_exit(root, id)
     if as_json:
-        click.echo(json.dumps(issue.to_dict(), indent=2))
+        data = issue.to_dict()
+        # Enrich links with target info
+        enriched_links = []
+        for link in issue.links:
+            entry = dict(link)
+            try:
+                t = load_issue(root, link["target"])
+                entry["target_status"] = t.status
+                entry["target_title"] = t.title
+            except (FileNotFoundError, ValueError):
+                entry["target_status"] = "deleted"
+                entry["target_title"] = ""
+            enriched_links.append(entry)
+        data["links"] = enriched_links
+        click.echo(json.dumps(data, indent=2))
         return
     comment_count = issue.body.count("**Comment**") if issue.body else 0
     status_str = click.style(issue.status, fg=_status_color(issue.status))
@@ -320,6 +335,17 @@ def show(id, as_json):
                     click.echo(f"  - {doc_ref}")
                 else:
                     click.echo(f"  - {doc_ref} (file not found)")
+    if issue.links:
+        click.echo("Links:")
+        for link in issue.links:
+            lt = link["type"]
+            tid = link["target"]
+            try:
+                t = load_issue(root, tid)
+                t_status = click.style(t.status, fg=_status_color(t.status))
+                click.echo(f"  {lt} #{tid} ({t_status}): {t.title}")
+            except (FileNotFoundError, ValueError):
+                click.echo(f"  {lt} #{tid} (deleted)")
     click.echo(f"Created: {issue.created_at}")
     click.echo(f"Updated: {issue.updated_at}")
     click.echo(f"Comments: {comment_count}")
@@ -1471,6 +1497,61 @@ def doc_unlink(id, doc_ref):
     save_issue(root, issue)
     click.echo(f"Unlinked doc '{doc_ref}' from issue #{id}")
     git_commit(root, f"yait: unlink doc '{doc_ref}' from #{id}")
+
+
+# ── link / unlink ──────────────────────────────────────────
+
+# Valid user-facing link types (excludes reverse-only types)
+_USER_LINK_TYPES = ("blocks", "depends-on", "relates-to")
+
+
+@main.command(name="link")
+@click.argument("source_id", type=int)
+@click.argument("link_type", type=click.Choice(_USER_LINK_TYPES))
+@click.argument("target_id", type=int)
+def link_cmd(source_id, link_type, target_id):
+    """Add a link between two issues.
+
+    \b
+    Examples:
+      yait link 3 blocks 5          # issue #3 blocks issue #5
+      yait link 3 relates-to 7      # issue #3 relates to #7
+      yait link 3 depends-on 1      # issue #3 depends on #1
+    """
+    root = _root()
+    _require_init(root)
+    try:
+        add_link(root, source_id, link_type, target_id)
+    except FileNotFoundError as e:
+        raise click.ClickException(str(e))
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Linked #{source_id} {link_type} #{target_id}")
+    git_commit(root, f"yait: link #{source_id} {link_type} #{target_id}")
+
+
+@main.command(name="unlink")
+@click.argument("source_id", type=int)
+@click.argument("target_id", type=int)
+def unlink_cmd(source_id, target_id):
+    """Remove all links between two issues.
+
+    \b
+    Examples:
+      yait unlink 3 5
+    """
+    root = _root()
+    _require_init(root)
+    # Check both issues exist
+    source = _load_or_exit(root, source_id)
+    target = _load_or_exit(root, target_id)
+    had_link = any(l.get("target") == target_id for l in source.links)
+    if not had_link:
+        click.echo(f"No link between #{source_id} and #{target_id}.")
+        return
+    remove_link(root, source_id, target_id)
+    click.echo(f"Unlinked #{source_id} and #{target_id}")
+    git_commit(root, f"yait: unlink #{source_id} and #{target_id}")
 
 
 # ── bulk ───────────────────────────────────────────────────
