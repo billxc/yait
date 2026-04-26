@@ -15,7 +15,7 @@ uv run pytest tests/ -v
 ## Running Tests
 
 ```bash
-# Run all tests (49 total)
+# Run all tests (382 total)
 uv run pytest tests/ -v
 
 # Run a specific test module
@@ -27,45 +27,48 @@ uv run pytest tests/ --cov=yait -v
 
 ## Feature Inventory
 
+### Core CRUD & Editing
+
 | Feature | Module | Test File | Tests | Status |
 |---|---|---|---|---|
-| Issue dataclass defaults | `models.py` | `test_models.py` | 6 | Pass |
-| Issue dataclass mutation | `models.py` | `test_models.py` | 2 | Pass |
-| Issue create with all fields | `models.py` | `test_models.py` | 1 | Pass |
-| Labels not shared between instances | `models.py` | `test_models.py` | 1 | Pass |
-| Store init + idempotent | `store.py` | `test_store.py` | 3 | Pass |
-| Save/load issue roundtrip | `store.py` | `test_store.py` | 3 | Pass |
-| ID auto-increment | `store.py` | `test_store.py` | 2 | Pass |
-| List issues (all / empty) | `store.py` | `test_store.py` | 2 | Pass |
-| List filter by status | `store.py` | `test_store.py` | 1 | Pass |
-| List filter by label | `store.py` | `test_store.py` | 1 | Pass |
-| List filter by assignee | `store.py` | `test_store.py` | 1 | Pass |
-| List combined filters | `store.py` | `test_store.py` | 1 | Pass |
-| Load non-existent issue | `store.py` | `test_store.py` | 1 | Pass |
-| Issue with comments (body roundtrip) | `store.py` | `test_store.py` | 1 | Pass |
-| YAML special chars roundtrip | `store.py` | `test_store.py` | 1 | Pass |
-| List on uninitialised dir | `store.py` | `test_store.py` | 1 | Pass |
-| Git repo detection | `git_ops.py` | `test_git_ops.py` | 2 | Pass |
-| git_add + git_commit | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
-| git_run returns CompletedProcess | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
-| git_commit no-op without staged | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
-| CLI: init | `cli.py` | `test_cli.py` | 1 | Pass |
-| CLI: new (basic + options + fail) | `cli.py` | `test_cli.py` | 3 | Pass |
-| CLI: list (show + empty + filter) | `cli.py` | `test_cli.py` | 3 | Pass |
-| CLI: show (details + not found) | `cli.py` | `test_cli.py` | 2 | Pass |
-| CLI: close + reopen | `cli.py` | `test_cli.py` | 1 | Pass |
-| CLI: comment | `cli.py` | `test_cli.py` | 1 | Pass |
-| CLI: label add/remove/duplicate | `cli.py` | `test_cli.py` | 3 | Pass |
-| CLI: search (match + no match) | `cli.py` | `test_cli.py` | 2 | Pass |
+| Issue dataclass defaults & mutation | `models.py` | `test_models.py` | 27 | Pass |
+| Store init + save/load roundtrip | `store.py` | `test_store.py` | 55 | Pass |
+| Git repo detection + commit | `git_ops.py` | `test_git_ops.py` | 5 | Pass |
+| CLI: init, new, list, show, close, reopen, delete | `cli.py` | `test_cli.py` | 146 | Pass |
+| CLI: comment, label, assign, edit, search, stats, log | `cli.py` | `test_cli.py` | (incl. above) | Pass |
 
-**Total: 49 tests across 4 modules**
+### v0.5 Features
+
+| Feature | Module | Test File | Tests | Status |
+|---|---|---|---|---|
+| Milestone management (create/list/show/close/reopen/edit/delete) | `cli.py` | `test_cli.py` | (incl. above) | Pass |
+| Bulk operations (label/assign/priority/milestone/type + filters) | `cli.py` | `test_cli.py` | (incl. above) | Pass |
+| Enhanced stats (--by milestone/assignee/priority, --json) | `cli.py` | `test_cli.py` | (incl. above) | Pass |
+| Advanced search (--regex, --title-only, --count, multi-field) | `cli.py` | `test_cli.py` | (incl. above) | Pass |
+| Issue templates (create/list/delete, new --template) | `store.py` | `test_store.py` | (incl. above) | Pass |
+| Config enhancement (defaults, display, set/reset) | `cli.py` | `test_config.py` | 36 | Pass |
+| Design document store (save/load/list/delete docs) | `store.py` | `test_doc_store.py` | 11 | Pass |
+| Design document CLI (create/show/list/edit/delete/link/unlink) | `cli.py` | `test_doc_cli.py` | 31 | Pass |
+| Issue linking data model + store | `store.py` | `test_links.py` | 18 | Pass |
+| Issue linking CLI (link/unlink/show) | `cli.py` | `test_links_cli.py` | 16 | Pass |
+| Output formatting (compact/wide/auto-detect) | `cli.py` | `test_output_format.py` | 25 | Pass |
+| Security (input validation, blank title, negative ID, etc.) | various | `test_security.py` | 12 | Pass |
+
+**Total: 382 tests across 11 test modules**
 
 ## Test Categories
 
-- **test_models.py** (10 tests) — Pure unit tests for Issue dataclass, no I/O.
-- **test_store.py** (18 tests) — Filesystem integration tests using `tmp_path` and `initialized_root` fixtures.
+- **test_models.py** (27 tests) — Unit tests for Issue/Milestone/Doc/Template dataclasses.
+- **test_store.py** (55 tests) — Filesystem integration tests for issue/template/milestone store operations.
 - **test_git_ops.py** (5 tests) — Git integration tests with real git repos in temp directories.
-- **test_cli.py** (16 tests) — CLI end-to-end tests via Click's `CliRunner` with monkeypatched `cwd`.
+- **test_cli.py** (146 tests) — CLI end-to-end tests via Click's `CliRunner` covering all commands.
+- **test_config.py** (36 tests) — Config management: defaults, display settings, set/reset commands.
+- **test_doc_store.py** (11 tests) — Design document store layer tests.
+- **test_doc_cli.py** (31 tests) — Design document CLI tests.
+- **test_links.py** (18 tests) — Issue linking data model and store tests.
+- **test_links_cli.py** (16 tests) — Issue linking CLI tests.
+- **test_output_format.py** (25 tests) — Output formatting (compact/wide/auto) tests.
+- **test_security.py** (12 tests) — Input validation and security edge cases.
 
 ## Shared Fixtures (`conftest.py`)
 
@@ -88,53 +91,76 @@ yait init
 ### 2. Create issues
 
 ```bash
-yait new --title "First bug" --type bug
-# Expected: prints "Created issue #1: First bug"
-
-yait new --title "Add search" --type feature
-# Expected: prints "Created issue #2: Add search"
-
+yait new --title "First bug" --type bug --priority p0
+yait new --title "Add search" --type feature --milestone v1.0
 yait new --title "Generic task"
-# Expected: prints "Created issue #3: Generic task" (type defaults to misc)
+# defaults to type=misc
 ```
 
-### 3. List and filter
+### 3. Milestone management
 
 ```bash
-yait list                    # all open issues
-yait list --status closed    # closed only
-yait list --type bug         # open bugs
-yait list --label urgent     # by label
+yait milestone create v1.0 --description "First release" --due 2026-06-01
+yait milestone list
+yait milestone show v1.0
+yait milestone close v1.0
 ```
 
-### 4. Show, close, reopen
+### 4. Bulk operations
 
 ```bash
+yait bulk label add urgent 1 2 3
+yait bulk priority p0 1 2
+yait bulk milestone v1.0 --filter-type bug --filter-status open
+```
+
+### 5. Advanced search
+
+```bash
+yait search "bug" --regex --status all
+yait search "crash" --title-only --count
+yait search "login" --label auth --priority p0
+```
+
+### 6. Design documents
+
+```bash
+yait doc create auth-prd --title "Auth PRD" -b "## Overview"
+yait doc link 1 2 auth-prd
+yait doc show auth-prd
+yait list --doc auth-prd
+```
+
+### 7. Issue linking
+
+```bash
+yait link 1 blocks 2
+yait link 3 relates-to 1
 yait show 1
-yait close 1
-yait show 1   # status should be "closed"
-yait reopen 1
-yait show 1   # status should be "open"
+# Links section shows relationships
+yait unlink 1 2
 ```
 
-### 5. Comment and search
+### 8. Configuration
 
 ```bash
-yait comment 1 -m "Fixed in abc123"
-yait search "bug"
+yait config
+yait config set defaults.type bug
+yait config set display.max_title_width 60
+yait config reset defaults.type
 ```
 
-### 6. Label management
+### 9. Output formatting
 
 ```bash
-yait label add 1 urgent
-yait label remove 1 urgent
+yait list --compact
+yait list --wide
+# Auto-detect: adapts to terminal width
 ```
 
 ## Known Limitations
 
 - No concurrency or locking tests — yait is single-user by design.
 - No Windows-specific path tests.
-- No test for malformed issue files (corrupt YAML, missing fields).
-- `yait edit` is not tested (requires interactive `$EDITOR`).
-- `--type` filter is not yet tested (v0.2 feature).
+- `yait edit` and `yait doc edit` (without -b) are not tested (require interactive `$EDITOR`).
+- `yait template create` is not tested (requires interactive `$EDITOR`).
