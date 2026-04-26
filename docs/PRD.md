@@ -1,6 +1,6 @@
 # PRD: yait — Yet Another Issue Tracker
 
-**Version:** 0.2
+**Version:** 0.5.0
 **Date:** 2026-04-26
 **Status:** Active
 
@@ -24,6 +24,8 @@ yait is a local issue tracker built on markdown files and git. Each issue is a m
 - No remote sync (user does their own push/pull)
 - No kanban / gantt visualization
 - No GitHub / GitLab sync
+- No webhook / automation
+- No shell auto-completion (users can configure Click's built-in support)
 
 ---
 
@@ -31,14 +33,23 @@ yait is a local issue tracker built on markdown files and git. Each issue is a m
 
 1. **Initialize**: As a developer, I run `yait init` in a project root to create `.yait/` and start tracking issues.
 2. **Create issue**: I run `yait new --title "Fix login bug" --type bug --label auth` to create an issue with a type and label.
-3. **List issues**: I run `yait list` to see all open issues, or `yait list --type bug` to filter by type.
-4. **View details**: I run `yait show 1` to see issue #1 in full.
-5. **Close issue**: I run `yait close 1` to mark it closed.
-6. **Reopen**: I run `yait reopen 1` to re-open.
-7. **Comment**: I run `yait comment 1 -m "Fixed in dev branch"` to add a comment.
-8. **Edit**: I run `yait edit 1` to open `$EDITOR`.
-9. **Labels**: I run `yait label add 1 feature` to add a label.
-10. **Search**: I run `yait search "login" --type bug` to search bugs matching "login".
+3. **Create from template**: I run `yait new "Login crash" --template bug` to create an issue from a predefined template.
+4. **List issues**: I run `yait list` to see all open issues, or `yait list --type bug` to filter by type.
+5. **View details**: I run `yait show 1` to see issue #1 in full, including links and docs.
+6. **Close issue**: I run `yait close 1` to mark it closed.
+7. **Reopen**: I run `yait reopen 1` to re-open.
+8. **Delete**: I run `yait delete 1` to permanently remove an issue.
+9. **Comment**: I run `yait comment 1 -m "Fixed in dev branch"` to add a comment.
+10. **Edit**: I run `yait edit 1` to open `$EDITOR`.
+11. **Labels**: I run `yait label add 1 feature` to add a label.
+12. **Search**: I run `yait search "login" --type bug --regex` to search bugs matching "login".
+13. **Statistics**: I run `yait stats --by milestone` to see issue distribution by milestone.
+14. **Milestones**: I run `yait milestone create v1.0 --due 2026-06-01` to manage milestones.
+15. **Bulk edit**: I run `yait bulk label add urgent 1 2 3` to batch-modify issues.
+16. **Issue linking**: I run `yait link 3 blocks 5` to create relationships between issues.
+17. **Design docs**: I run `yait doc create auth-prd --title "Auth PRD"` to manage design documents linked to issues.
+18. **Configuration**: I run `yait config set defaults.type bug` to customize defaults.
+19. **Export/Import**: I run `yait export --format json` or `yait import data.json` for data portability.
 
 ---
 
@@ -49,11 +60,17 @@ yait is a local issue tracker built on markdown files and git. Each issue is a m
 ```
 project-root/
 └── .yait/
-    ├── config.yaml        # project config
-    └── issues/
-        ├── 1.md
-        ├── 2.md
-        └── ...
+    ├── config.yaml        # project config (incl. milestones, defaults, display)
+    ├── issues/
+    │   ├── 1.md
+    │   ├── 2.md
+    │   └── ...
+    ├── templates/
+    │   ├── bug.md
+    │   └── feature.md
+    └── docs/
+        ├── auth-prd.md
+        └── auth-tech-spec.md
 ```
 
 ### config.yaml
@@ -61,6 +78,20 @@ project-root/
 ```yaml
 version: 1
 next_id: 3
+milestones:
+  v1.0:
+    status: open
+    description: "First release"
+    due_date: "2026-06-01"
+    created_at: "2026-04-26T12:00:00+08:00"
+defaults:
+  type: misc
+  priority: null
+  assignee: null
+  labels: []
+display:
+  max_title_width: 50
+  date_format: short
 ```
 
 ### Issue File Format (`<id>.md`)
@@ -71,9 +102,16 @@ id: 1
 title: "Fix login bug"
 status: open
 type: bug
+priority: p1
 labels:
   - auth
-assignee: ""
+assignee: "alice"
+milestone: "v1.0"
+docs:
+  - auth-prd
+links:
+  - type: blocks
+    target: 5
 created_at: "2026-04-26T10:00:00+08:00"
 updated_at: "2026-04-26T10:00:00+08:00"
 ---
@@ -90,11 +128,15 @@ Fixed in dev branch
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | id | int | yes | Auto-increment from 1 |
-| title | string | yes | Title |
+| title | string | yes | Title (non-blank) |
 | status | enum | yes | `open` or `closed` |
 | type | enum | yes | `feature`, `bug`, `enhancement`, `misc` (default: `misc`) |
+| priority | enum | no | `p0`, `p1`, `p2`, `p3` or none |
 | labels | list[str] | no | Labels, default `[]` |
 | assignee | string | no | Responsible person |
+| milestone | string | no | Milestone reference |
+| docs | list[str] | no | Linked documents (slug or path) |
+| links | list[dict] | no | Issue relationships (blocks/depends-on/relates-to) |
 | created_at | datetime | yes | ISO 8601 |
 | updated_at | datetime | yes | Updated on every change |
 
@@ -104,74 +146,101 @@ Fixed in dev branch
 
 Entry command: `yait`
 
-### `yait init`
+### Core CRUD
 
-Initialize current directory as a yait project.
+| Command | Description |
+|---------|-------------|
+| `yait init` | Initialize .yait directory |
+| `yait new --title "Title" [--type bug] [--label tag] [--assign alice] [--body "text"] [--template bug] [--priority p1] [--milestone v1.0]` | Create issue |
+| `yait show <id> [--json]` | View issue details |
+| `yait list [--status open\|closed\|all] [--type bug] [--label tag] [--assignee name] [--milestone v1.0] [--priority p0] [--has-doc] [--no-doc] [--doc slug] [--compact\|--wide] [--json]` | List issues |
+| `yait close <id>` | Close issue |
+| `yait reopen <id>` | Reopen issue |
+| `yait delete <id>` | Delete issue permanently |
 
-- Creates `.yait/` directory and `config.yaml`
-- Creates `.yait/issues/` directory
-- Errors if already initialized
-- Auto git commit
+### Editing
 
-### `yait new`
+| Command | Description |
+|---------|-------------|
+| `yait edit <id>` | Open in $EDITOR |
+| `yait comment <id> -m "text"` | Add comment |
+| `yait label add\|remove <id> <name>` | Manage labels |
+| `yait assign <id> <name>` | Assign issue |
+| `yait unassign <id>` | Unassign issue |
 
-Create a new issue.
+### Search & Stats
 
-```
-yait new --title "Title" [--type bug] [--label tag] [--assign alice] [--body "text"]
-```
+| Command | Description |
+|---------|-------------|
+| `yait search <query> [--type] [--status] [--label] [--priority] [--assignee] [--milestone] [--regex] [--title-only] [--count]` | Advanced search |
+| `yait stats [--by milestone\|assignee\|priority] [--json]` | Statistics by multiple dimensions |
+| `yait log <id>` | View change history |
 
-- `--title` required
-- `--type` optional, one of `feature|bug|enhancement|misc`, default `misc`
-- `--label` repeatable
-- `--assign` optional
-- `--body` optional
-- Reads `next_id` from config, increments after creation
-- Auto git commit: `yait: create issue #<id> — <title>`
+### Milestone Management
 
-### `yait list`
+| Command | Description |
+|---------|-------------|
+| `yait milestone create <name> [--description] [--due YYYY-MM-DD]` | Create milestone |
+| `yait milestone list [--status open\|closed] [--json]` | List milestones with progress |
+| `yait milestone show <name> [--json]` | Milestone details + linked issues |
+| `yait milestone close <name>` | Close milestone |
+| `yait milestone reopen <name>` | Reopen milestone |
+| `yait milestone edit <name> [--description] [--due]` | Edit milestone |
+| `yait milestone delete <name> [--force]` | Delete milestone |
 
-List issues.
+### Bulk Operations
 
-```
-yait list [--status open|closed|all] [--type bug] [--label tag] [--assignee name]
-```
+| Command | Description |
+|---------|-------------|
+| `yait bulk label add\|remove <value> <IDs...>` | Batch label changes |
+| `yait bulk assign <name> <IDs...>` | Batch assign |
+| `yait bulk unassign <IDs...>` | Batch unassign |
+| `yait bulk priority <level> <IDs...>` | Batch priority |
+| `yait bulk milestone <name> <IDs...>` | Batch milestone |
+| `yait bulk type <type> <IDs...>` | Batch type |
+| All bulk commands support `--filter-*` options | Filter-based bulk ops |
 
-- Default: `status=open`
-- Supports filtering by type, label, assignee
-- Table output format
+### Issue Linking
 
-### `yait show <id>`
+| Command | Description |
+|---------|-------------|
+| `yait link <id> blocks\|depends-on\|relates-to <target>` | Create link |
+| `yait unlink <id> <target>` | Remove link |
 
-Show full issue details: formatted frontmatter + body.
+### Design Documents
 
-### `yait close <id>`
+| Command | Description |
+|---------|-------------|
+| `yait doc create <slug> --title "Title" [-b "body"\|--body-file path]` | Create managed doc |
+| `yait doc show <slug> [--json]` | View doc + linked issues |
+| `yait doc list [--json]` | List all docs |
+| `yait doc edit <slug> [--title] [-b "body"]` | Edit doc |
+| `yait doc delete <slug> [-f]` | Delete doc |
+| `yait doc link <IDs...> <slug-or-path>` | Link doc to issues |
+| `yait doc unlink <id> <slug-or-path>` | Unlink doc from issue |
 
-Set status to `closed`, update `updated_at`, auto commit.
+### Issue Templates
 
-### `yait reopen <id>`
+| Command | Description |
+|---------|-------------|
+| `yait template create <name>` | Create template (opens $EDITOR) |
+| `yait template list` | List templates |
+| `yait template delete <name>` | Delete template |
 
-Set status to `open`, update `updated_at`, auto commit.
+### Configuration
 
-### `yait comment <id> -m "text"`
+| Command | Description |
+|---------|-------------|
+| `yait config` | Show current config |
+| `yait config set <key> <value>` | Set config value |
+| `yait config reset <key>` | Reset to default |
 
-Append comment to markdown body, update `updated_at`, auto commit.
+### Data Portability
 
-### `yait edit <id>`
-
-Open `$EDITOR` (default: `vi`) to edit issue. Updates `updated_at` and commits on save.
-
-### `yait label add|remove <id> <name>`
-
-Add or remove a label. Updates `updated_at`, auto commit.
-
-### `yait search <query>`
-
-Full-text search across all issue titles and bodies (case-insensitive).
-
-```
-yait search <query> [--type bug] [--status open]
-```
+| Command | Description |
+|---------|-------------|
+| `yait export [--format json\|csv]` | Export issues |
+| `yait import <file>` | Import issues from JSON |
 
 ---
 
@@ -189,33 +258,41 @@ yait search <query> [--type bug] [--status open]
 yet-another-issue-tracker/
 ├── pyproject.toml
 ├── README.md
+├── TESTING.md
+├── docs/
+│   ├── PRD.md
+│   ├── DESIGN-v0.5.md
+│   └── ...
 ├── src/
 │   └── yait/
 │       ├── __init__.py
-│       ├── cli.py          # click CLI entry
-│       ├── models.py       # Issue dataclass
-│       ├── store.py        # file I/O + config
+│       ├── cli.py          # click CLI entry (all commands)
+│       ├── models.py       # Issue, Milestone, Doc, Template dataclasses
+│       ├── store.py        # file I/O + config + milestones + templates + docs
 │       └── git_ops.py      # git operations
 └── tests/
     ├── conftest.py
     ├── test_models.py
     ├── test_store.py
     ├── test_git_ops.py
-    └── test_cli.py
+    ├── test_cli.py
+    ├── test_config.py
+    ├── test_doc_cli.py
+    ├── test_doc_store.py
+    ├── test_links.py
+    ├── test_links_cli.py
+    ├── test_output_format.py
+    └── test_security.py
 ```
 
 ---
 
-## Milestones
+## Version History
 
-### M1: Skeleton + Basic CRUD (v0.1) ✅
+### v0.1 — Skeleton + Basic CRUD ✅
 
 - Project structure (pyproject.toml, src layout)
-- `yait init` — initialize .yait directory
-- `yait new` — create issue
-- `yait list` — list issues with --status filter
-- `yait show` — view issue details
-- Issue data model + file I/O
+- `yait init`, `yait new`, `yait list`, `yait show`
 - `yait close` / `yait reopen`
 - `yait comment` / `yait edit`
 - `yait label add/remove`
@@ -223,21 +300,43 @@ yet-another-issue-tracker/
 - Git auto-commit on all write operations
 - Test suite (49 tests)
 
-### M2: Issue Types (v0.2) — In Progress
+### v0.2 — Issue Types ✅
 
-- Add `type` field to Issue model (`feature`, `bug`, `enhancement`, `misc`)
-- Default type: `misc`
-- `yait new --type bug` support
-- `yait list --type bug` filter
-- `yait search --type bug` filter
-- Update test suite (~60 tests)
+- `type` field (`feature`, `bug`, `enhancement`, `misc`)
+- `yait new --type`, `yait list --type`, `yait search --type`
+
+### v0.3 — Priority, Milestone field, Assign, Stats, Export/Import ✅
+
+- `priority` field (p0–p3)
+- `milestone` field (string on issue)
+- `yait assign` / `yait unassign`
+- `yait stats` (by type/label)
+- `yait log` (change history)
+- `yait export` (JSON/CSV) / `yait import` (JSON)
+- `yait delete`
+- Bug fixes: blank title validation, negative ID handling, `---` arg parsing, priority option
+
+### v0.5 — Full Feature Set ✅
+
+**Phase 1 — Core (P0):**
+- Milestone management: `yait milestone create/list/show/close/reopen/edit/delete`
+- Bulk editing: `yait bulk label/assign/unassign/priority/milestone/type` with ID lists and `--filter-*`
+
+**Phase 2 — Enhance (P1):**
+- Enhanced stats: `yait stats --by milestone|assignee|priority`, `--json`
+- Advanced search: `--label`, `--priority`, `--assignee`, `--milestone`, `--regex`, `--title-only`, `--count`
+- Issue templates: `yait template create/list/delete`, `yait new --template`
+- Design document management: `yait doc create/show/list/edit/delete/link/unlink`
+
+**Phase 3 — Polish (P2):**
+- Issue linking: `yait link/unlink` with blocks/depends-on/relates-to relationships
+- Config enhancement: `yait config/config set/config reset` with defaults and display settings
+- Output formatting: compact/wide modes, auto-detect terminal width, title truncation
 
 ### Future
 
 - Web UI
-- Export (JSON, CSV)
-- Templates for issue types
-- Bulk operations
+- Performance optimization (indexing for 1000+ issues)
 
 ---
 
@@ -247,20 +346,18 @@ yet-another-issue-tracker/
 - Issue ID not found: `Issue #<id> not found.`
 - Duplicate init: `yait already initialized.`
 - Invalid type: click Choice validation error
+- Blank title: validation error
+- Negative ID: validation error
 - Git unavailable: warn but don't block operations
+- Bulk operation failures: skip and report summary (success/failed/skipped)
+- File corruption: warn and skip, don't crash
 
 ---
 
 ## Acceptance Criteria
 
-v0.2 is complete when:
+v0.5.0 is complete when all features above are implemented and:
 
-```bash
-cd my-project
-yait init
-yait new --title "Bug report" --type bug -l urgent
-yait new --title "New feature" --type feature
-yait new --title "Note"  # defaults to misc
-yait list --type bug     # shows only bug
-yait search "feature" --type feature
-```
+- 382 automated tests passing
+- All v0.3.x data is readable without migration
+- All new commands documented and tested

@@ -3,7 +3,7 @@
 **版本**: v0.5
 **日期**: 2026-04-26
 **作者**: yait-pm-v2
-**状态**: Draft
+**状态**: Implemented
 
 ---
 
@@ -862,26 +862,26 @@ yait list --doc auth-prd
 
 ### 5.1 任务拆分
 
-| # | 任务 | 优先级 | 依赖 | 估算 |
+| # | 任务 | 优先级 | 依赖 | 状态 |
 |---|------|--------|------|------|
-| T1 | Milestone dataclass + store 层 CRUD | P0 | — | M |
-| T2 | Milestone CLI 命令组 (create/list/show/close/reopen/edit/delete) | P0 | T1 | L |
-| T3 | `yait stats` 增加 milestone/assignee/priority 分布 | P1 | T1 | S |
-| T4 | `bulk` 命令组 (label/assign/priority/milestone/type) | P0 | — | L |
-| T5 | `bulk` 基于 filter 的批量操作 | P0 | T4 | M |
-| T6 | `search` 增加多字段过滤 + regex + title-only + count | P1 | — | M |
-| T7 | Template 数据模型 + store 层 | P1 | — | S |
-| T8 | Template CLI (create/list/delete) + `new --template` | P1 | T7 | M |
-| T9 | Issue links 数据模型 + store 层 | P2 | — | M |
-| T10 | `link`/`unlink` 命令 + show 输出 | P2 | T9 | M |
-| T11 | Doc dataclass + store 层 CRUD (.yait/docs/) | P1 | — | M |
-| T12 | `doc` CLI 命令组 (create/show/list/edit/delete/link/unlink) | P1 | T11 | L |
-| T13 | `show`/`list`/`search` 整合文档关联显示和过滤 | P1 | T12 | M |
-| T14 | Config 增强 (defaults + display) | P2 | — | S |
-| T15 | `config` CLI 命令 | P2 | T14 | S |
-| T16 | 输出格式化改进 (truncation, compact/wide) | P2 | T14 | M |
-| T17 | 测试套件更新 (所有新功能) | 贯穿 | 各任务 | L |
-| T18 | README + PRD 文档更新 | 收尾 | 全部 | S |
+| T1 | Milestone dataclass + store 层 CRUD | P0 | — | ✅ Done |
+| T2 | Milestone CLI 命令组 (create/list/show/close/reopen/edit/delete) | P0 | T1 | ✅ Done |
+| T3 | `yait stats` 增加 milestone/assignee/priority 分布 | P1 | T1 | ✅ Done |
+| T4 | `bulk` 命令组 (label/assign/priority/milestone/type) | P0 | — | ✅ Done |
+| T5 | `bulk` 基于 filter 的批量操作 | P0 | T4 | ✅ Done |
+| T6 | `search` 增加多字段过滤 + regex + title-only + count | P1 | — | ✅ Done |
+| T7 | Template 数据模型 + store 层 | P1 | — | ✅ Done |
+| T8 | Template CLI (create/list/delete) + `new --template` | P1 | T7 | ✅ Done |
+| T9 | Issue links 数据模型 + store 层 | P2 | — | ✅ Done |
+| T10 | `link`/`unlink` 命令 + show 输出 | P2 | T9 | ✅ Done |
+| T11 | Doc dataclass + store 层 CRUD (.yait/docs/) | P1 | — | ✅ Done |
+| T12 | `doc` CLI 命令组 (create/show/list/edit/delete/link/unlink) | P1 | T11 | ✅ Done |
+| T13 | `show`/`list`/`search` 整合文档关联显示和过滤 | P1 | T12 | ✅ Done |
+| T14 | Config 增强 (defaults + display) | P2 | — | ✅ Done |
+| T15 | `config` CLI 命令 | P2 | T14 | ✅ Done |
+| T16 | 输出格式化改进 (truncation, compact/wide) | P2 | T14 | ✅ Done |
+| T17 | 测试套件更新 (所有新功能) | 贯穿 | 各任务 | ✅ Done (382 tests) |
+| T18 | README + PRD 文档更新 | 收尾 | 全部 | ✅ Done |
 
 **Size 说明**: S=半天, M=1天, L=2天
 
@@ -910,12 +910,12 @@ Phase 4 (Wrap-up):
 
 ### 5.3 里程碑
 
-| 版本 | 内容 | 预计 |
+| 版本 | 内容 | 状态 |
 |------|------|------|
-| v0.5.0-alpha | T1+T2: Milestone 管理 | Phase 1 中 |
-| v0.5.0-beta | T4+T5: 批量编辑 | Phase 1 末 |
-| v0.5.0-rc | T3+T6+T7+T8+T11-T13: 统计+搜索+模板+文档关联 | Phase 2 末 |
-| v0.5.0 | T9-T10+T14-T18: 关联+配置+格式+文档 | Phase 3-4 末 |
+| v0.5.0-alpha | T1+T2: Milestone 管理 | ✅ Done |
+| v0.5.0-beta | T4+T5: 批量编辑 | ✅ Done |
+| v0.5.0-rc | T3+T6+T7+T8+T11-T13: 统计+搜索+模板+文档关联 | ✅ Done |
+| v0.5.0 | T9-T10+T14-T18: 关联+配置+格式+文档 | ✅ Done |
 
 ---
 
