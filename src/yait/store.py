@@ -64,7 +64,10 @@ def next_id(root: Path) -> int:
 
 
 def _issue_path(root: Path, issue_id: int) -> Path:
-    return _issues_dir(root) / f"{issue_id}.md"
+    sid = str(issue_id)
+    if not sid.isdigit():
+        raise ValueError(f"Invalid issue ID: {issue_id!r}")
+    return _issues_dir(root) / f"{sid}.md"
 
 
 def save_issue(root: Path, issue: Issue) -> None:
