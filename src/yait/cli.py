@@ -23,8 +23,7 @@ def _now() -> str:
 
 def _require_init(root: Path) -> None:
     if not is_initialized(root):
-        click.echo("Not a yait project. Run 'yait init' first.", err=True)
-        raise SystemExit(1)
+        raise click.ClickException("Not a yait project. Run 'yait init' first.")
 
 
 def _status_color(status: str) -> str:
@@ -57,8 +56,7 @@ def _load_or_exit(root: Path, issue_id: int) -> Issue:
     try:
         return load_issue(root, issue_id)
     except FileNotFoundError:
-        click.echo(f"Issue #{issue_id} not found.", err=True)
-        raise SystemExit(1)
+        raise click.ClickException(f"Issue #{issue_id} not found.")
 
 
 # ── CLI Group ────────────────────────────────────────────────
@@ -96,8 +94,7 @@ def new(title, title_opt, type, label, assign, body):
     """Create a new issue."""
     resolved = title or title_opt
     if not resolved:
-        click.echo("Error: title is required", err=True)
-        raise SystemExit(1)
+        raise click.ClickException("title is required")
     root = _root()
     _require_init(root)
     now = _now()
