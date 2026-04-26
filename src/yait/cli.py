@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +26,14 @@ def _require_init(root: Path) -> None:
         raise SystemExit(1)
 
 
+def _status_color(status: str) -> str:
+    return "green" if status == "open" else "red"
+
+
+def _type_color(type: str) -> str:
+    return {"bug": "red", "feature": "blue", "enhancement": "yellow"}.get(type, "white")
+
+
 def _print_issue_table(issues: list[Issue]) -> None:
     if not issues:
         click.echo("No issues found.")
@@ -33,11 +43,13 @@ def _print_issue_table(issues: list[Issue]) -> None:
     ty_w = max(len(i.type) for i in issues)
     ti_w = max(len(i.title) for i in issues)
     header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TYPE':<{ty_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  ASSIGNEE"
-    click.echo(header)
+    click.echo(click.style(header, bold=True))
     for i in issues:
         labels = ",".join(i.labels) if i.labels else "\u2014"
         assignee = i.assignee or "\u2014"
-        click.echo(f"#{i.id:<{id_w}}  {i.status:<{st_w}}  {i.type:<{ty_w}}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
+        status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
+        type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
+        click.echo(f"#{i.id:<{id_w}}  {status_str}  {type_str}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
 
 
 def _load_or_exit(root: Path, issue_id: int) -> Issue:
@@ -110,7 +122,9 @@ def new(title, type, label, assign, body):
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--label", default=None, help="Filter by label")
 @click.option("--assignee", default=None, help="Filter by assignee")
-def list_cmd(status, type, label, assignee):
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.option("--sort", default="id", type=click.Choice(["id", "created", "updated"]), help="Sort order (default: id)")
+def list_cmd(status, type, label, assignee, as_json, sort):
     """List issues (default: open only)."""
     root = _root()
     _require_init(root)
@@ -120,6 +134,15 @@ def list_cmd(status, type, label, assignee):
         issues = [i for i in issues if label in i.labels]
     if assignee:
         issues = [i for i in issues if i.assignee == assignee]
+    if sort == "created":
+        issues.sort(key=lambda i: i.created_at)
+    elif sort == "updated":
+        issues.sort(key=lambda i: i.updated_at)
+    else:
+        issues.sort(key=lambda i: i.id)
+    if as_json:
+        click.echo(json.dumps([i.to_dict() for i in issues], indent=2))
+        return
     if not issues:
         click.echo("No issues found.")
         return
@@ -130,13 +153,18 @@ def list_cmd(status, type, label, assignee):
 
 @main.command()
 @click.argument("id", type=int)
-def show(id):
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+def show(id, as_json):
     """Show issue details."""
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
-    click.echo(f"#{issue.id}  [{issue.status}]  {issue.title}")
-    click.echo(f"Type: {issue.type}")
+    if as_json:
+        click.echo(json.dumps(issue.to_dict(), indent=2))
+        return
+    status_str = click.style(issue.status, fg=_status_color(issue.status))
+    click.echo(f"#{issue.id}  [{status_str}]  {issue.title}")
+    click.echo(f"Type: {click.style(issue.type, fg=_type_color(issue.type))}")
     if issue.labels:
         click.echo(f"Labels: {', '.join(issue.labels)}")
     if issue.assignee:
@@ -150,39 +178,41 @@ def show(id):
 # ── close ────────────────────────────────────────────────────
 
 @main.command()
-@click.argument("id", type=int)
-def close(id):
-    """Close an issue."""
+@click.argument("ids", nargs=-1, type=int, required=True)
+def close(ids):
+    """Close one or more issues."""
     root = _root()
     _require_init(root)
-    issue = _load_or_exit(root, id)
-    if issue.status == "closed":
-        click.echo(f"Issue #{id} is already closed.")
-        return
-    issue.status = "closed"
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Closed issue #{id}: {issue.title}")
-    git_commit(root, f"yait: close issue #{id}")
+    for id in ids:
+        issue = _load_or_exit(root, id)
+        if issue.status == "closed":
+            click.echo(f"Issue #{id} is already closed.")
+            continue
+        issue.status = "closed"
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Closed issue #{id}: {issue.title}")
+        git_commit(root, f"yait: close issue #{id}")
 
 
 # ── reopen ───────────────────────────────────────────────────
 
 @main.command()
-@click.argument("id", type=int)
-def reopen(id):
-    """Reopen a closed issue."""
+@click.argument("ids", nargs=-1, type=int, required=True)
+def reopen(ids):
+    """Reopen one or more closed issues."""
     root = _root()
     _require_init(root)
-    issue = _load_or_exit(root, id)
-    if issue.status == "open":
-        click.echo(f"Issue #{id} is already open.")
-        return
-    issue.status = "open"
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Reopened issue #{id}: {issue.title}")
-    git_commit(root, f"yait: reopen issue #{id}")
+    for id in ids:
+        issue = _load_or_exit(root, id)
+        if issue.status == "open":
+            click.echo(f"Issue #{id} is already open.")
+            continue
+        issue.status = "open"
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Reopened issue #{id}: {issue.title}")
+        git_commit(root, f"yait: reopen issue #{id}")
 
 
 # ── comment ──────────────────────────────────────────────────
@@ -284,7 +314,8 @@ def label_remove(id, name):
     help="Filter by status",
 )
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
-def search(query, status, type):
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+def search(query, status, type, as_json):
     """Full-text search across issue titles and bodies."""
     root = _root()
     _require_init(root)
@@ -295,7 +326,39 @@ def search(query, status, type):
         i for i in issues
         if q in i.title.lower() or q in i.body.lower()
     ]
+    if as_json:
+        click.echo(json.dumps([i.to_dict() for i in matches], indent=2))
+        return
     if not matches:
         click.echo("No matching issues.")
         return
     _print_issue_table(matches)
+
+
+# ── stats ───────────────────────────────────────────────────
+
+@main.command()
+def stats():
+    """Show issue statistics."""
+    root = _root()
+    _require_init(root)
+    all_issues = list_issues(root, status=None)
+    total = len(all_issues)
+    if total == 0:
+        click.echo("No issues.")
+        return
+    open_count = sum(1 for i in all_issues if i.status == "open")
+    closed_count = sum(1 for i in all_issues if i.status == "closed")
+    click.echo(f"Issues: {total} total ({open_count} open, {closed_count} closed)")
+
+    type_counts = Counter(i.type for i in all_issues)
+    type_str = ", ".join(f"{t}={c}" for t, c in type_counts.most_common())
+    click.echo(f"By type: {type_str}")
+
+    label_counts: Counter[str] = Counter()
+    for i in all_issues:
+        for lbl in i.labels:
+            label_counts[lbl] += 1
+    if label_counts:
+        label_str = ", ".join(f"{l}={c}" for l, c in label_counts.most_common())
+        click.echo(f"By label: {label_str}")

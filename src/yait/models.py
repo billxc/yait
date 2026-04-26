@@ -15,3 +15,16 @@ class Issue:
     created_at: str = ""
     updated_at: str = ""
     body: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "status": self.status,
+            "type": self.type,
+            "labels": self.labels,
+            "assignee": self.assignee,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "body": self.body,
+        }
