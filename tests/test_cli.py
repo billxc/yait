@@ -389,6 +389,107 @@ class TestSearchDefaultOpen:
         assert "Closed issue" in result.output
 
 
+class TestAdvancedSearch:
+    """Tests for advanced search features: filters, regex, title-only, count."""
+
+    def test_search_with_label_filter(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Auth bug", "-l", "auth"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Auth feature", "-l", "ui"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "auth", "--label", "auth"], catch_exceptions=False)
+        assert "Auth bug" in result.output
+        assert "Auth feature" not in result.output
+
+    def test_search_with_priority_filter(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Critical crash", "--priority", "p0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Minor crash", "--priority", "p2"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "crash", "--priority", "p0"], catch_exceptions=False)
+        assert "Critical crash" in result.output
+        assert "Minor crash" not in result.output
+
+    def test_search_with_assignee_filter(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Alice task"], catch_exceptions=False)
+        runner.invoke(main, ["assign", "1", "alice"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Bob task"], catch_exceptions=False)
+        runner.invoke(main, ["assign", "2", "bob"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "task", "--assignee", "alice"], catch_exceptions=False)
+        assert "Alice task" in result.output
+        assert "Bob task" not in result.output
+
+    def test_search_with_milestone_filter(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "V1 bug", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "V2 bug", "--milestone", "v2.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "bug", "--milestone", "v1.0"], catch_exceptions=False)
+        assert "V1 bug" in result.output
+        assert "V2 bug" not in result.output
+
+    def test_search_combined_filters(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Login crash", "--type", "bug", "--priority", "p0", "-l", "auth"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Login slow", "--type", "bug", "--priority", "p2", "-l", "auth"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Login redesign", "--type", "feature", "--priority", "p0", "-l", "ui"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "login", "--type", "bug", "--priority", "p0", "--label", "auth"], catch_exceptions=False)
+        assert "Login crash" in result.output
+        assert "Login slow" not in result.output
+        assert "Login redesign" not in result.output
+
+    def test_search_regex(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "OOM error"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "crash dump"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "slow query"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "crash|oom", "--regex", "--status", "all"], catch_exceptions=False)
+        assert "OOM error" in result.output
+        assert "crash dump" in result.output
+        assert "slow query" not in result.output
+
+    def test_search_regex_invalid(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["search", "[invalid", "--regex"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "Invalid regex" in result.output
+
+    def test_search_regex_in_body(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Normal title", "-b", "segfault at 0x0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Other issue", "-b", "nothing special"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "seg.*0x", "--regex"], catch_exceptions=False)
+        assert "Normal title" in result.output
+        assert "Other issue" not in result.output
+
+    def test_search_title_only(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Login page", "-b", "crash on submit"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Crash handler", "-b", "login related"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "login", "--title-only"], catch_exceptions=False)
+        assert "Login page" in result.output
+        assert "Crash handler" not in result.output
+
+    def test_search_title_only_with_regex(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "OOM bug", "-b", "crash details"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Normal bug", "-b", "OOM in logs"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "oom", "--regex", "--title-only"], catch_exceptions=False)
+        assert "OOM bug" in result.output
+        assert "Normal bug" not in result.output
+
+    def test_search_count(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Bug one"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Bug two"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Feature one"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "bug", "--count"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert '2 issues match "bug"' in result.output
+
+    def test_search_count_no_query(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Issue A"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Issue B"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "--count", "--label", "nonexistent"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "0 issues match" in result.output
+
+    def test_search_no_query_with_filters(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "P0 issue", "--priority", "p0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "P2 issue", "--priority", "p2"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "--priority", "p0"], catch_exceptions=False)
+        assert "P0 issue" in result.output
+        assert "P2 issue" not in result.output
+
+
 class TestVersion:
     def test_version_flag(self, runner: CliRunner):
         result = runner.invoke(main, ["--version"], catch_exceptions=False)

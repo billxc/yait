@@ -704,7 +704,7 @@ def milestone_delete(name, force):
 # ── search ───────────────────────────────────────────────────
 
 @main.command(context_settings=dict(ignore_unknown_options=True))
-@click.argument("query")
+@click.argument("query", required=False, default=None)
 @click.option(
     "--status", default="open",
     type=click.Choice(["open", "closed", "all"]),
@@ -712,7 +712,15 @@ def milestone_delete(name, force):
 )
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
-def search(query, status, type, as_json):
+@click.option("--label", default=None, help="Filter by label")
+@click.option("--priority", default=None, type=click.Choice(PRIORITIES), help="Filter by priority")
+@click.option("--assignee", default=None, help="Filter by assignee")
+@click.option("--milestone", default=None, help="Filter by milestone")
+@click.option("--regex", "use_regex", is_flag=True, default=False, help="Treat query as regex pattern")
+@click.option("--title-only", is_flag=True, default=False, help="Search only in issue titles")
+@click.option("--count", is_flag=True, default=False, help="Show match count only")
+def search(query, status, type, as_json, label, priority, assignee, milestone,
+           use_regex, title_only, count):
     """Full-text search across issue titles and bodies.
 
     \b
@@ -720,16 +728,39 @@ def search(query, status, type, as_json):
       yait search "login"
       yait search "crash" --status all
       yait search "api" --type bug --json
+      yait search "login" --label auth --priority p0 --assignee alice
+      yait search --regex "crash|oom|kill" --status all
+      yait search "login" --title-only
+      yait search "bug" --count
     """
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
-    issues = list_issues(root, status=st, type=type)
-    q = query.lower()
-    matches = [
-        i for i in issues
-        if q in i.title.lower() or q in i.body.lower()
-    ]
+    issues = list_issues(root, status=st, type=type, label=label,
+                         priority=priority, assignee=assignee, milestone=milestone)
+
+    if query is None:
+        matches = issues
+    elif use_regex:
+        try:
+            pat = re.compile(query, re.IGNORECASE)
+        except re.error as e:
+            raise click.ClickException(f"Invalid regex: {e}")
+        if title_only:
+            matches = [i for i in issues if pat.search(i.title)]
+        else:
+            matches = [i for i in issues if pat.search(i.title) or pat.search(i.body)]
+    else:
+        q = query.lower()
+        if title_only:
+            matches = [i for i in issues if q in i.title.lower()]
+        else:
+            matches = [i for i in issues if q in i.title.lower() or q in i.body.lower()]
+
+    if count:
+        label_str = f' "{query}"' if query else ""
+        click.echo(f"{len(matches)} issues match{label_str}")
+        return
     if as_json:
         click.echo(json.dumps([i.to_dict() for i in matches], indent=2))
         return
