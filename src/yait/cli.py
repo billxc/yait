@@ -22,6 +22,8 @@ from .store import (
     save_milestone, load_milestone, list_milestones, update_milestone, delete_milestone,
     save_template, load_template, list_templates, delete_template,
     save_doc, load_doc, list_docs, delete_doc, _docs_dir,
+    get_defaults, get_display, get_config_value, set_config_value, reset_config_value,
+    _DEFAULT_DEFAULTS, _DEFAULT_DISPLAY,
 )
 
 
@@ -80,14 +82,22 @@ def _highlight_text(text: str, query: str) -> str:
     return pattern.sub(lambda m: click.style(m.group(), bold=True, fg="yellow"), text)
 
 
-def _print_issue_table(issues: list[Issue], highlight: str | None = None) -> None:
+def _print_issue_table(issues: list[Issue], highlight: str | None = None, root: Path | None = None) -> None:
     if not issues:
         click.echo('No issues found. Create one with: yait new "..."')
         return
+    # Read display settings
+    max_title_w = 50
+    if root is not None:
+        try:
+            display = get_display(root)
+            max_title_w = display.get("max_title_width", 50)
+        except Exception:
+            pass
     id_w = max(len(f"#{i.id}") for i in issues)
     st_w = max(len(i.status) for i in issues)
     ty_w = max(len(i.type) for i in issues)
-    ti_w = max(len(i.title) for i in issues)
+    ti_w = min(max(len(i.title) for i in issues), max_title_w)
     header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TYPE':<{ty_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  ASSIGNEE"
     click.echo(click.style(header, bold=True))
     for i in issues:
@@ -95,9 +105,12 @@ def _print_issue_table(issues: list[Issue], highlight: str | None = None) -> Non
         assignee = i.assignee or "\u2014"
         status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
         type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
-        title = _highlight_text(i.title, highlight) if highlight else i.title
+        display_title = i.title
+        if len(display_title) > max_title_w:
+            display_title = display_title[:max_title_w - 1] + "\u2026"
+        title = _highlight_text(display_title, highlight) if highlight else display_title
         # Pad after highlighting to keep columns aligned (ANSI codes don't take visual width)
-        pad = ti_w - len(i.title)
+        pad = ti_w - len(display_title)
         title_padded = title + " " * max(pad, 0)
         click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  {title_padded}  {labels:<12}  {assignee}")
 
@@ -143,6 +156,90 @@ def init():
     git_commit(root, "yait: init")
 
 
+# ── config ──────────────────────────────────────────────────
+
+@main.group(invoke_without_command=True)
+@click.pass_context
+def config(ctx):
+    """View or modify yait configuration.
+
+    \b
+    Examples:
+      yait config                         # show all config
+      yait config set defaults.type bug   # set a value
+      yait config reset defaults.type     # reset to default
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    root = _root()
+    _require_init(root)
+    defaults = get_defaults(root)
+    display = get_display(root)
+    click.echo(click.style("defaults:", bold=True))
+    for k, v in sorted(defaults.items()):
+        default_marker = ""
+        if k in _DEFAULT_DEFAULTS and defaults[k] == _DEFAULT_DEFAULTS[k]:
+            default_marker = " (default)"
+        click.echo(f"  {k}: {_format_config_value(v)}{default_marker}")
+    click.echo(click.style("display:", bold=True))
+    for k, v in sorted(display.items()):
+        default_marker = ""
+        if k in _DEFAULT_DISPLAY and display[k] == _DEFAULT_DISPLAY[k]:
+            default_marker = " (default)"
+        click.echo(f"  {k}: {_format_config_value(v)}{default_marker}")
+
+
+def _format_config_value(v) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, list):
+        return ", ".join(v) if v else "[]"
+    return str(v)
+
+
+@config.command(name="set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key, value):
+    """Set a configuration value.
+
+    \b
+    Examples:
+      yait config set defaults.type bug
+      yait config set defaults.priority p2
+      yait config set defaults.assignee alice
+      yait config set defaults.labels urgent,frontend
+      yait config set display.max_title_width 60
+      yait config set display.date_format full
+    """
+    root = _root()
+    _require_init(root)
+    try:
+        set_config_value(root, key, value)
+    except (KeyError, ValueError) as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Set {key} = {value}")
+
+
+@config.command(name="reset")
+@click.argument("key")
+def config_reset(key):
+    """Reset a configuration value to its default.
+
+    \b
+    Examples:
+      yait config reset defaults.type
+      yait config reset display.max_title_width
+    """
+    root = _root()
+    _require_init(root)
+    try:
+        reset_config_value(root, key)
+    except KeyError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Reset {key} to default")
+
+
 # ── new ──────────────────────────────────────────────────────
 
 @main.command(context_settings=dict(ignore_unknown_options=True))
@@ -176,11 +273,15 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
     root = _root()
     _require_init(root)
 
+    # Load config defaults as the base fallback
+    cfg_defaults = get_defaults(root)
+
     # Load template defaults if specified
-    tmpl_type = "misc"
-    tmpl_priority = "none"
-    tmpl_labels: list[str] = []
+    tmpl_type = cfg_defaults["type"]
+    tmpl_priority = cfg_defaults["priority"]
+    tmpl_labels: list[str] = list(cfg_defaults["labels"])
     tmpl_body = ""
+    tmpl_assignee = cfg_defaults["assignee"]
     if template_name:
         try:
             tmpl = load_template(root, template_name)
@@ -191,10 +292,11 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
         tmpl_labels = list(tmpl.labels)
         tmpl_body = tmpl.body
 
-    # CLI args override template values
+    # CLI args override template/config values
     final_type = type if type is not None else tmpl_type
     final_priority = priority if priority is not None else tmpl_priority
     final_labels = list(label) if label else tmpl_labels
+    final_assignee = assign if assign is not None else tmpl_assignee
 
     resolved_body = _read_body(body, body_file)
     if not resolved_body and tmpl_body:
@@ -209,7 +311,7 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
         type=final_type,
         priority=final_priority,
         labels=final_labels,
-        assignee=assign,
+        assignee=final_assignee,
         milestone=milestone,
         created_at=now,
         updated_at=now,
@@ -271,7 +373,7 @@ def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, 
     if not issues:
         click.echo('No issues found. Create one with: yait new "..."')
         return
-    _print_issue_table(issues)
+    _print_issue_table(issues, root=root)
 
 
 # ── show ─────────────────────────────────────────────────────
@@ -946,7 +1048,7 @@ def search(query, status, type, as_json, label, priority, assignee, milestone,
     if not matches:
         click.echo("No matching issues.")
         return
-    _print_issue_table(matches, highlight=query)
+    _print_issue_table(matches, highlight=query, root=root)
 
 
 # ── stats ───────────────────────────────────────────────────
