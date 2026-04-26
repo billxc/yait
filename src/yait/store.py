@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 from pathlib import Path
 
 import yaml
@@ -43,10 +44,15 @@ def _write_config(root: Path, cfg: dict) -> None:
 
 
 def next_id(root: Path) -> int:
-    cfg = _read_config(root)
-    nid = cfg["next_id"]
-    cfg["next_id"] = nid + 1
-    _write_config(root, cfg)
+    cfg_path = _config_path(root)
+    with open(cfg_path, 'r+') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        cfg = yaml.safe_load(f.read())
+        nid = cfg["next_id"]
+        cfg["next_id"] = nid + 1
+        f.seek(0)
+        f.truncate()
+        f.write(yaml.dump(cfg, default_flow_style=False))
     return nid
 
 
@@ -75,11 +81,13 @@ def load_issue(root: Path, issue_id: int) -> Issue:
     path = _issue_path(root, issue_id)
     if not path.exists():
         raise FileNotFoundError(f"Issue {issue_id} not found")
-    content = path.read_text()
-    parts = content.split("---\n")
-    # parts: ['', frontmatter, rest...]
-    fm = yaml.safe_load(parts[1])
-    body = "---\n".join(parts[2:]).strip()
+    text = path.read_text()
+    if not text.startswith("---\n"):
+        raise ValueError(f"Issue {issue_id}: missing frontmatter opening delimiter")
+    end_idx = text.index("---\n", 4)
+    fm_text = text[4:end_idx]
+    body = text[end_idx + 4:].strip()
+    fm = yaml.safe_load(fm_text)
     return Issue(
         id=fm["id"],
         title=fm["title"],
