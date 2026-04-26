@@ -64,6 +64,7 @@ v0.3.1 通过了 5 组 AI 压力测试（1000+ 命令、149 issues）：
 | **P1** | 增强统计 | 按 milestone/assignee/priority 维度分析 |
 | **P1** | 高级搜索 | 多字段组合过滤、正则搜索 |
 | **P1** | Issue 模板 | 预设 issue 模板，快速创建 |
+| **P1** | 设计文档关联 | 将设计文档关联到 issue，支持托管文档和外部引用 |
 | **P2** | Issue 关联 | blocks/relates-to 关系 |
 | **P2** | 配置文件增强 | 用户自定义默认值 |
 | **P2** | 输出格式化改进 | 长标题截断、紧凑模式 |
@@ -509,6 +510,317 @@ yait config reset defaults.type
 
 ---
 
+### 3.9 设计文档关联 (P1)
+
+#### 3.9.1 功能描述
+
+支持将设计文档（PRD、技术方案、测试计划等）关联到 issue，形成"先设计后开发"的项目管理闭环。
+
+**核心场景**:
+- PM 写完 PRD 后创建对应的 issue，并将 PRD 关联上去
+- 开发者在 issue 上追加技术方案文档
+- 一个 PRD 拆分成多个 task issue，每个 issue 都关联同一份 PRD（多对多）
+- 一个 issue 同时关联 PRD + 技术方案 + 测试计划
+
+#### 3.9.2 存储模型：混合模式
+
+支持两种文档来源：
+
+1. **托管文档** — 存储在 `.yait/docs/<slug>.md`，由 yait 创建和管理，自动 git commit
+2. **外部引用** — 引用项目中已有的文件路径（如 `docs/architecture.md`），yait 只存储路径
+
+**目录结构**:
+
+```
+.yait/
+├── config.yaml
+├── issues/
+│   ├── 1.md
+│   └── 2.md
+└── docs/
+    ├── auth-prd.md
+    └── auth-tech-spec.md
+```
+
+**消歧规则**: Issue 的 `docs` 字段是字符串列表。根据是否含 `/` 区分：
+- **不含 `/`** → 托管文档 slug → 指向 `.yait/docs/<slug>.md`
+- **含 `/`** → 外部路径 → 相对于项目根目录
+
+```yaml
+# Issue frontmatter 示例
+docs:
+  - auth-prd                   # → .yait/docs/auth-prd.md（托管）
+  - docs/architecture.md       # → <project-root>/docs/architecture.md（外部）
+```
+
+#### 3.9.3 数据模型
+
+**Issue 新增字段** (`models.py`):
+
+```python
+@dataclass
+class Issue:
+    # ... 现有字段 ...
+    docs: list[str] = field(default_factory=list)   # 新增
+```
+
+向后兼容：旧 issue 无 `docs` 字段时默认为 `[]`。
+
+**Doc dataclass** (`models.py`):
+
+```python
+@dataclass
+class Doc:
+    slug: str           # 文件名标识，如 "auth-prd"
+    title: str          # 文档标题
+    created_at: str = ""
+    updated_at: str = ""
+    body: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "slug": self.slug,
+            "title": self.title,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "body": self.body,
+        }
+```
+
+**托管文档文件格式** (`.yait/docs/auth-prd.md`):
+
+```markdown
+---
+slug: auth-prd
+title: "认证系统 PRD"
+created_at: "2026-04-26T12:00:00+08:00"
+updated_at: "2026-04-26T14:00:00+08:00"
+---
+
+## 概述
+
+认证系统需要支持邮箱注册、OAuth2.0、SSO...
+
+## 用户故事
+
+1. 作为用户，我希望...
+```
+
+#### 3.9.4 Store 层 (`store.py`)
+
+新增函数：
+
+```python
+def _docs_dir(root: Path) -> Path:
+    return _yait_root(root) / "docs"
+
+def save_doc(root: Path, doc: Doc) -> None:
+    """保存托管文档到 .yait/docs/<slug>.md"""
+
+def load_doc(root: Path, slug: str) -> Doc:
+    """加载托管文档，slug 不含 /"""
+
+def list_docs(root: Path) -> list[Doc]:
+    """列出所有托管文档"""
+
+def delete_doc(root: Path, slug: str) -> None:
+    """删除托管文档"""
+```
+
+`init_store()` 扩展：创建 `.yait/docs/` 目录。
+
+`save_issue()` / `load_issue()` 扩展：处理 `docs` 字段的序列化/反序列化。
+
+#### 3.9.5 CLI 命令
+
+**`yait doc` 命令组**:
+
+```bash
+# ── 创建托管文档 ──────────────────────────────────
+# 方式 1: 打开 $EDITOR 编写
+yait doc create auth-prd --title "认证系统 PRD"
+
+# 方式 2: 内联内容
+yait doc create auth-prd --title "认证系统 PRD" -b "## 概述\n\n..."
+
+# 方式 3: 从文件导入
+yait doc create auth-prd --title "认证系统 PRD" --body-file draft.md
+
+# ── 查看文档 ──────────────────────────────────────
+yait doc show auth-prd
+# 输出:
+# auth-prd: 认证系统 PRD
+# Created: 2026-04-26T12:00:00+08:00
+# Updated: 2026-04-26T14:00:00+08:00
+# Linked issues: #1 (open), #3 (open), #7 (closed)
+#
+# ## 概述
+# 认证系统需要支持...
+
+yait doc show auth-prd --json
+
+# ── 列出所有文档 ──────────────────────────────────
+yait doc list
+# 输出:
+# SLUG            TITLE                UPDATED              ISSUES
+# auth-prd        认证系统 PRD          2026-04-26 14:00     #1, #3, #7
+# auth-tech-spec  认证技术方案          2026-04-26 16:00     #1
+
+yait doc list --json
+
+# ── 编辑文档 ──────────────────────────────────────
+yait doc edit auth-prd                    # 打开 $EDITOR
+yait doc edit auth-prd -b "新内容"        # 替换 body
+yait doc edit auth-prd --title "新标题"   # 修改标题
+
+# ── 删除文档 ──────────────────────────────────────
+yait doc delete auth-prd
+# 输出: Warning: auth-prd is linked to 3 issues (#1, #3, #7).
+#        Delete will remove the document but NOT the references.
+#        Use 'yait doc unlink' to clean up first.
+# Are you sure? [y/N]
+
+yait doc delete auth-prd -f               # 跳过确认
+
+# ── 关联 / 取消关联 ──────────────────────────────
+# 关联托管文档
+yait doc link 1 auth-prd
+# 输出: Linked doc 'auth-prd' to issue #1
+
+# 关联外部文件
+yait doc link 1 docs/architecture.md
+# 输出: Linked doc 'docs/architecture.md' to issue #1
+
+# 取消关联
+yait doc unlink 1 auth-prd
+# 输出: Unlinked doc 'auth-prd' from issue #1
+
+# 一次关联多个 issue（一个 PRD 拆成多个 task）
+yait doc link 1 2 3 auth-prd
+# 输出: Linked doc 'auth-prd' to issues #1, #2, #3
+```
+
+#### 3.9.6 与现有命令的整合
+
+**`yait show <id>` 增强**:
+
+```
+#1  [open]  实现用户认证
+Type: feature
+Priority: p0
+Labels: auth, backend
+Milestone: v1.0
+Assignee: alice
+Docs:
+  - auth-prd (认证系统 PRD)
+  - docs/architecture.md
+Created: 2026-04-26T12:00:00+08:00
+Updated: 2026-04-26T14:00:00+08:00
+Comments: 3
+
+...
+```
+
+JSON 输出中 `docs` 字段直接输出字符串列表。
+
+**`yait list` 新增过滤**:
+
+```bash
+yait list --has-doc               # 只显示有关联文档的 issue
+yait list --no-doc                # 只显示无文档的 issue
+yait list --doc auth-prd          # 只显示关联了指定文档的 issue
+```
+
+**`yait search` 增强**:
+
+搜索文本时同时匹配托管文档的标题。如果 issue 关联了 `auth-prd`（标题为"认证系统 PRD"），搜索"认证"时该 issue 也会命中。
+
+#### 3.9.7 实现方案
+
+**store.py 变更**:
+- `save_doc()` / `load_doc()`: 复用 issue 的 YAML frontmatter 模式（`---` 分隔符 + `yaml.dump/safe_load`）
+- `list_docs()`: 扫描 `.yait/docs/*.md`，跳过非 `.md` 文件
+- `init_store()`: 增加 `_docs_dir(root).mkdir(parents=True, exist_ok=True)`
+- `save_issue()`: frontmatter dict 增加 `"docs": issue.docs`
+- `load_issue()`: `fm.get("docs") or []`
+
+**cli.py 变更**:
+- 新增 `doc` Click group，子命令 `create`/`show`/`list`/`edit`/`delete`/`link`/`unlink`
+- `show` 命令增加 Docs 输出部分
+- `list_cmd` 增加 `--has-doc`/`--no-doc`/`--doc` 过滤选项
+- `search` 命令增加托管文档标题匹配逻辑
+
+**git_ops.py**: 无变更。`git_commit()` 已自动 stage `.yait/` 目录（包含新增的 `docs/` 子目录）。
+
+**link/unlink 多 issue 支持**:
+`yait doc link 1 2 3 auth-prd` — 最后一个参数为 doc 标识，前面的为 issue ID。通过检测最后一个参数是否为整数来消歧：如果非整数则作为 doc slug/path。
+
+#### 3.9.8 边界情况
+
+| 场景 | 处理方式 |
+|------|----------|
+| slug 含 `/` | 报错: "Doc slug cannot contain '/'. Use a simple name like 'auth-prd'." |
+| slug 重复创建 | 报错: "Doc 'auth-prd' already exists." |
+| link 不存在的托管文档 | 允许（宽松模式，不强制引用完整性）。`show` 时标注 "(not found)" |
+| link 不存在的外部文件 | 允许，`show` 时标注 "(file not found)" |
+| 重复 link | 跳过并提示: "Issue #1 already linked to 'auth-prd'." |
+| unlink 不存在的关联 | 提示: "Issue #1 is not linked to 'auth-prd'." |
+| delete 有关联的文档 | 警告并需确认（或 `-f`），删除文档文件但不自动清理 issue 上的引用 |
+| slug 合法字符 | 允许字母、数字、连字符、下划线: `[a-zA-Z0-9_-]+` |
+| 旧 issue 无 `docs` 字段 | 默认 `[]`，无需迁移 |
+| `yait doc show` 外部引用 | 报错: "'docs/arch.md' is an external reference, not a managed doc. View it directly." |
+
+#### 3.9.9 使用场景示例
+
+**场景 1: PM 写 PRD 并创建 issue**
+
+```bash
+# PM 创建 PRD
+yait doc create auth-prd --title "认证系统 PRD" --body-file ~/drafts/auth-prd.md
+
+# 从 PRD 拆分出 task issue
+yait new "实现邮箱注册" -t feature --milestone v1.0 -a alice
+yait new "实现 OAuth2.0" -t feature --milestone v1.0 -a bob
+yait new "实现 SSO" -t feature --milestone v1.0 -a charlie
+
+# 批量关联 PRD 到所有 task
+yait doc link 1 2 3 auth-prd
+```
+
+**场景 2: 开发者追加技术方案**
+
+```bash
+# 开发者写技术方案
+yait doc create auth-tech-spec --title "认证技术方案"
+# (打开 $EDITOR 编写)
+
+# 关联到对应 issue
+yait doc link 1 auth-tech-spec
+
+# 查看 issue 时可以看到所有关联文档
+yait show 1
+```
+
+**场景 3: 关联项目中已有的文档**
+
+```bash
+# 项目 docs/ 下已有架构文档
+yait doc link 1 docs/architecture.md
+yait doc link 1 docs/api-spec.yaml
+```
+
+**场景 4: 查看文档关联的所有 issue**
+
+```bash
+yait doc show auth-prd
+# 输出中包含 "Linked issues: #1 (open), #2 (open), #3 (open)"
+
+# 或通过 list 过滤
+yait list --doc auth-prd
+```
+
+---
+
 ## 4. 非功能需求
 
 ### 4.1 性能目标
@@ -562,11 +874,14 @@ yait config reset defaults.type
 | T8 | Template CLI (create/list/delete) + `new --template` | P1 | T7 | M |
 | T9 | Issue links 数据模型 + store 层 | P2 | — | M |
 | T10 | `link`/`unlink` 命令 + show 输出 | P2 | T9 | M |
-| T11 | Config 增强 (defaults + display) | P2 | — | S |
-| T12 | `config` CLI 命令 | P2 | T11 | S |
-| T13 | 输出格式化改进 (truncation, compact/wide) | P2 | T11 | M |
-| T14 | 测试套件更新 (所有新功能) | 贯穿 | 各任务 | L |
-| T15 | README + PRD 文档更新 | 收尾 | 全部 | S |
+| T11 | Doc dataclass + store 层 CRUD (.yait/docs/) | P1 | — | M |
+| T12 | `doc` CLI 命令组 (create/show/list/edit/delete/link/unlink) | P1 | T11 | L |
+| T13 | `show`/`list`/`search` 整合文档关联显示和过滤 | P1 | T12 | M |
+| T14 | Config 增强 (defaults + display) | P2 | — | S |
+| T15 | `config` CLI 命令 | P2 | T14 | S |
+| T16 | 输出格式化改进 (truncation, compact/wide) | P2 | T14 | M |
+| T17 | 测试套件更新 (所有新功能) | 贯穿 | 各任务 | L |
+| T18 | README + PRD 文档更新 | 收尾 | 全部 | S |
 
 **Size 说明**: S=半天, M=1天, L=2天
 
@@ -580,15 +895,16 @@ Phase 1 (P0 — Core):
 Phase 2 (P1 — Enhance):
   T3, T6 可并行
   T7 → T8
-  ↳ 统计增强 + 高级搜索 + 模板
+  T11 → T12 → T13
+  ↳ 统计增强 + 高级搜索 + 模板 + 设计文档关联
 
 Phase 3 (P2 — Polish):
   T9 → T10
-  T11 → T12 → T13
+  T14 → T15 → T16
   ↳ Issue 关联 + 配置 + 输出美化
 
 Phase 4 (Wrap-up):
-  T14 + T15
+  T17 + T18
   ↳ 测试补全 + 文档更新
 ```
 
@@ -598,8 +914,8 @@ Phase 4 (Wrap-up):
 |------|------|------|
 | v0.5.0-alpha | T1+T2: Milestone 管理 | Phase 1 中 |
 | v0.5.0-beta | T4+T5: 批量编辑 | Phase 1 末 |
-| v0.5.0-rc | T3+T6+T7+T8: 统计+搜索+模板 | Phase 2 末 |
-| v0.5.0 | T9-T15: 关联+配置+格式+文档 | Phase 3-4 末 |
+| v0.5.0-rc | T3+T6+T7+T8+T11-T13: 统计+搜索+模板+文档关联 | Phase 2 末 |
+| v0.5.0 | T9-T10+T14-T18: 关联+配置+格式+文档 | Phase 3-4 末 |
 
 ---
 
