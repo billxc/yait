@@ -1,3 +1,4 @@
+import subprocess
 import pytest
 import yaml
 from pathlib import Path
@@ -257,3 +258,68 @@ def test_save_issue_type_in_frontmatter(initialized_root: Path):
     parts = content.split("---\n", 2)
     fm = yaml.safe_load(parts[1])
     assert fm["type"] == "enhancement"
+
+
+def test_load_issue_body_with_horizontal_rule(initialized_root: Path):
+    """Body containing --- horizontal rule survives roundtrip."""
+    body = "Some text\n\n---\n\nMore text after rule"
+    issue = Issue(id=1, title="HR test", body=body)
+    save_issue(initialized_root, issue)
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.body == body
+
+
+def test_load_issue_body_with_multiple_separators(initialized_root: Path):
+    """Body with multiple --- separators roundtrips correctly."""
+    body = (
+        "Section 1\n\n"
+        "---\n\n"
+        "Section 2\n\n"
+        "---\n\n"
+        "Section 3"
+    )
+    issue = Issue(id=1, title="Multi-sep", body=body)
+    save_issue(initialized_root, issue)
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.body == body
+
+
+def test_next_id_file_locking(initialized_root: Path):
+    """next_id uses file locking for atomic read-modify-write."""
+    import fcntl
+    from yait.store import _config_path
+
+    cfg_path = _config_path(initialized_root)
+    # Hold an exclusive lock and verify next_id blocks (via subprocess timeout)
+    # Basic test: sequential calls still produce unique IDs
+    ids = [next_id(initialized_root) for _ in range(10)]
+    assert ids == list(range(1, 11))
+    assert len(set(ids)) == 10
+
+    # Verify the lock is used by checking fcntl.flock is called on the config file
+    # We do this by holding a lock and running next_id in a subprocess
+    script = f"""
+import sys, fcntl, time
+f = open("{cfg_path}", "r+")
+fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+# Hold lock for 2 seconds
+time.sleep(2)
+f.close()
+"""
+    # Start a process that holds the lock
+    proc = subprocess.Popen(
+        ["python3", "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    import time
+    time.sleep(0.3)  # Let subprocess grab the lock
+
+    # next_id should block until the lock is released, so it should take >1s
+    start = time.monotonic()
+    nid = next_id(initialized_root)
+    elapsed = time.monotonic() - start
+    proc.wait()
+
+    assert nid == 11
+    assert elapsed > 1.0, f"next_id returned too quickly ({elapsed:.2f}s), lock not effective"
