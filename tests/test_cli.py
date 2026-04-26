@@ -429,3 +429,135 @@ class TestLog:
         result = runner.invoke(main, ["log"], catch_exceptions=False)
         assert result.exit_code == 0
         assert len(result.output.strip()) > 0
+
+
+class TestBodyFile:
+    def test_body_from_file(self, runner: CliRunner, initialized_cli, tmp_path):
+        body_file = tmp_path / "body.md"
+        body_file.write_text("Body from file")
+        result = runner.invoke(
+            main, ["new", "file test", "--body-file", str(body_file)], catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.body == "Body from file"
+
+    def test_body_from_stdin(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main, ["new", "stdin test", "--body", "-"], input="Body from stdin\n", catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.body == "Body from stdin"
+
+    def test_body_and_body_file_conflict(self, runner: CliRunner, initialized_cli, tmp_path):
+        body_file = tmp_path / "body.md"
+        body_file.write_text("file body")
+        result = runner.invoke(
+            main, ["new", "test", "--body", "inline", "--body-file", str(body_file)]
+        )
+        assert result.exit_code != 0
+        assert "Cannot use both" in result.output
+
+    def test_comment_from_file(self, runner: CliRunner, initialized_cli, tmp_path):
+        runner.invoke(main, ["new", "test"], catch_exceptions=False)
+        msg_file = tmp_path / "comment.md"
+        msg_file.write_text("Comment from file")
+        result = runner.invoke(
+            main, ["comment", "1", "--message-file", str(msg_file)], catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert "Comment from file" in issue.body
+
+    def test_comment_from_stdin(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "test"], catch_exceptions=False)
+        result = runner.invoke(
+            main, ["comment", "1", "-m", "-"], input="Comment from stdin\n", catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert "Comment from stdin" in issue.body
+
+    def test_message_and_message_file_conflict(self, runner: CliRunner, initialized_cli, tmp_path):
+        runner.invoke(main, ["new", "test"], catch_exceptions=False)
+        msg_file = tmp_path / "comment.md"
+        msg_file.write_text("file msg")
+        result = runner.invoke(
+            main, ["comment", "1", "-m", "inline", "--message-file", str(msg_file)]
+        )
+        assert result.exit_code != 0
+        assert "Cannot use both" in result.output
+
+
+class TestExport:
+    def test_export_json_stdout(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "Bug A", "-t", "bug"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Feature B", "-t", "feature"], catch_exceptions=False)
+        result = runner.invoke(main, ["export"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 2
+        assert data[0]["title"] == "Bug A"
+        assert data[1]["title"] == "Feature B"
+
+    def test_export_csv_stdout(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "Bug A", "-t", "bug", "-l", "urgent"], catch_exceptions=False)
+        result = runner.invoke(main, ["export", "--format", "csv"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Bug A" in result.output
+        assert "urgent" in result.output
+        assert "id,title,status" in result.output
+
+    def test_export_to_file(self, runner: CliRunner, initialized_cli, tmp_path):
+        runner.invoke(main, ["new", "Test"], catch_exceptions=False)
+        outfile = tmp_path / "out.json"
+        result = runner.invoke(main, ["export", "-o", str(outfile)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Exported 1 issues" in result.output
+        data = json.loads(outfile.read_text())
+        assert len(data) == 1
+
+
+class TestImport:
+    def _export_json(self, runner, initialized_cli):
+        result = runner.invoke(main, ["export"], catch_exceptions=False)
+        return result.output
+
+    def test_import_json(self, runner: CliRunner, initialized_cli, yait_root, tmp_path, monkeypatch):
+        runner.invoke(main, ["new", "Issue 1", "-t", "bug"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Issue 2", "-t", "feature"], catch_exceptions=False)
+        export_data = self._export_json(runner, initialized_cli)
+
+        # Create a new yait repo in tmp dir
+        import subprocess
+        new_root = tmp_path / "import_test"
+        new_root.mkdir()
+        subprocess.run(["git", "init"], cwd=new_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=new_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=new_root, check=True, capture_output=True)
+        monkeypatch.chdir(new_root)
+        runner.invoke(main, ["init"], catch_exceptions=False)
+
+        import_file = tmp_path / "issues.json"
+        import_file.write_text(export_data)
+        result = runner.invoke(main, ["import", str(import_file)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Imported 2" in result.output
+        issue = load_issue(new_root, 1)
+        assert issue.title == "Issue 1"
+
+    def test_import_skip_duplicates(self, runner: CliRunner, initialized_cli, tmp_path):
+        runner.invoke(main, ["new", "Existing"], catch_exceptions=False)
+        data = [{"id": 1, "title": "Duplicate", "status": "open", "type": "misc",
+                 "priority": "none", "labels": [], "assignee": None,
+                 "created_at": "", "updated_at": "", "body": ""},
+                {"id": 2, "title": "New one", "status": "open", "type": "misc",
+                 "priority": "none", "labels": [], "assignee": None,
+                 "created_at": "", "updated_at": "", "body": ""}]
+        import_file = tmp_path / "issues.json"
+        import_file.write_text(json.dumps(data))
+        result = runner.invoke(main, ["import", str(import_file)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "skipped 1" in result.output
+        assert "Imported 1" in result.output

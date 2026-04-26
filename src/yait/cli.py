@@ -7,12 +7,42 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+import csv
+import io
+import sys
+
 import click
 
 from . import __version__
 from .git_ops import git_commit, git_log, is_git_repo
 from .models import ISSUE_TYPES, PRIORITIES, Issue
 from .store import init_store, is_initialized, list_issues, load_issue, next_id, save_issue
+
+
+def _read_body(body: str | None, body_file: str | None) -> str:
+    """Resolve body text from --body and --body-file options.
+
+    --body - reads from stdin. --body-file reads from a file path.
+    Raises ClickException if both are provided.
+    """
+    if body is not None and body_file is not None:
+        raise click.ClickException("Cannot use both --body and --body-file.")
+    if body_file is not None:
+        return Path(body_file).read_text().rstrip("\n")
+    if body == "-":
+        return sys.stdin.read().rstrip("\n")
+    return body or ""
+
+
+def _read_message(message: str | None, message_file: str | None) -> str | None:
+    """Resolve message text from --message and --message-file options."""
+    if message is not None and message_file is not None:
+        raise click.ClickException("Cannot use both --message and --message-file.")
+    if message_file is not None:
+        return Path(message_file).read_text().rstrip("\n")
+    if message == "-":
+        return sys.stdin.read().rstrip("\n")
+    return message
 
 
 def _root() -> Path:
@@ -115,8 +145,9 @@ def init():
 @click.option("--type", "-t", default="misc", type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")
 @click.option("--assign", "-a", default=None, help="Assignee")
-@click.option("--body", "-b", default="", help="Issue body text")
-def new(title, title_opt, type, label, assign, body):
+@click.option("--body", "-b", default=None, help="Issue body text (use '-' for stdin)")
+@click.option("--body-file", default=None, help="Read body from file")
+def new(title, title_opt, type, label, assign, body, body_file):
     """Create a new issue.
 
     \b
@@ -124,12 +155,15 @@ def new(title, title_opt, type, label, assign, body):
       yait new "Fix login bug"
       yait new "Add dark mode" -t feature -l ui
       yait new "Crash on startup" -t bug -a alice -b "Repro: open app"
+      yait new "Long desc" --body-file notes.md
+      echo "body" | yait new "From stdin" --body -
     """
     resolved = title or title_opt
     if not resolved:
         raise click.ClickException("title is required")
     root = _root()
     _require_init(root)
+    resolved_body = _read_body(body, body_file)
     now = _now()
     nid = next_id(root)
     issue = Issue(
@@ -141,7 +175,7 @@ def new(title, title_opt, type, label, assign, body):
         assignee=assign,
         created_at=now,
         updated_at=now,
-        body=body,
+        body=resolved_body,
     )
     save_issue(root, issue)
     click.echo(f"Created issue #{nid}: {resolved}")
@@ -269,12 +303,14 @@ def reopen(ids):
 
 @main.command()
 @click.argument("id", type=int)
-@click.option("--message", "-m", default=None, help="Comment text")
-def comment(id, message):
+@click.option("--message", "-m", default=None, help="Comment text (use '-' for stdin)")
+@click.option("--message-file", default=None, help="Read comment from file")
+def comment(id, message, message_file):
     """Add a comment to an issue."""
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
+    message = _read_message(message, message_file)
     if message is None:
         message = click.edit()
         if not message or not message.strip():
@@ -297,19 +333,24 @@ def comment(id, message):
 @click.option("--title", "-T", "new_title", default=None, help="New title")
 @click.option("--type", "-t", "new_type", default=None, type=click.Choice(ISSUE_TYPES), help="New type")
 @click.option("--assign", "-a", "new_assign", default=None, help="New assignee")
-@click.option("--body", "-b", "new_body", default=None, help="New body")
-def edit(id, new_title, new_type, new_assign, new_body):
+@click.option("--body", "-b", "new_body", default=None, help="New body (use '-' for stdin)")
+@click.option("--body-file", "new_body_file", default=None, help="Read new body from file")
+def edit(id, new_title, new_type, new_assign, new_body, new_body_file):
     """Edit an issue inline or in $EDITOR.
 
     \b
     Examples:
       yait edit 1 -T "New title"
       yait edit 1 -t bug -a bob
+      yait edit 1 --body-file updated.md
       yait edit 1                  # opens $EDITOR
     """
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
+    if new_body is not None or new_body_file is not None:
+        resolved_body = _read_body(new_body, new_body_file)
+        new_body = resolved_body
     if any(v is not None for v in (new_title, new_type, new_assign, new_body)):
         if new_title is not None:
             issue.title = new_title
@@ -500,3 +541,100 @@ def log(id, limit):
         click.echo(output)
     else:
         click.echo("No history found.")
+
+
+# ── export ──────────────────────────────────────────────────
+
+@main.command(name="export")
+@click.option("--format", "fmt", default="json", type=click.Choice(["json", "csv"]), help="Output format (default: json)")
+@click.option("-o", "--output", "outfile", default=None, help="Output file path (default: stdout)")
+def export_cmd(fmt, outfile):
+    """Export all issues.
+
+    \b
+    Examples:
+      yait export
+      yait export --format csv
+      yait export -o issues.json
+      yait export --format csv -o issues.csv
+    """
+    root = _root()
+    _require_init(root)
+    issues = list_issues(root, status=None)
+    issues.sort(key=lambda i: i.id)
+    data = [i.to_dict() for i in issues]
+
+    if fmt == "json":
+        text = json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        buf = io.StringIO()
+        fieldnames = ["id", "title", "status", "type", "priority", "labels", "assignee", "created_at", "updated_at", "body"]
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for row in data:
+            row = dict(row)
+            row["labels"] = ",".join(row["labels"]) if row["labels"] else ""
+            writer.writerow(row)
+        text = buf.getvalue()
+
+    if outfile:
+        Path(outfile).write_text(text)
+        click.echo(f"Exported {len(issues)} issues to {outfile}")
+    else:
+        click.echo(text, nl=False)
+
+
+# ── import ──────────────────────────────────────────────────
+
+@main.command(name="import")
+@click.argument("file", type=click.Path(exists=True))
+def import_cmd(file):
+    """Import issues from a JSON file.
+
+    \b
+    Examples:
+      yait import issues.json
+    """
+    root = _root()
+    _require_init(root)
+    data = json.loads(Path(file).read_text())
+    if not isinstance(data, list):
+        raise click.ClickException("Expected a JSON array of issues.")
+
+    existing_ids = {i.id for i in list_issues(root, status=None)}
+    imported = 0
+    skipped = 0
+
+    for item in data:
+        issue_id = item.get("id")
+        if issue_id in existing_ids:
+            click.echo(f"Warning: skipping issue #{issue_id} (already exists)", err=True)
+            skipped += 1
+            continue
+        issue = Issue(
+            id=issue_id,
+            title=item["title"],
+            status=item.get("status", "open"),
+            type=item.get("type", "misc"),
+            priority=item.get("priority", "none"),
+            labels=item.get("labels") or [],
+            assignee=item.get("assignee"),
+            created_at=item.get("created_at", ""),
+            updated_at=item.get("updated_at", ""),
+            body=item.get("body", ""),
+        )
+        save_issue(root, issue)
+        imported += 1
+
+    # Update next_id to be above the highest imported ID
+    if imported > 0:
+        from .store import _read_config, _write_config
+        all_issues = list_issues(root, status=None)
+        max_id = max(i.id for i in all_issues)
+        cfg = _read_config(root)
+        if cfg["next_id"] <= max_id:
+            cfg["next_id"] = max_id + 1
+            _write_config(root, cfg)
+        git_commit(root, f"yait: import {imported} issues")
+
+    click.echo(f"Imported {imported} issues, skipped {skipped}.")
