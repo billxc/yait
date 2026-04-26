@@ -700,3 +700,150 @@ class TestBulkType:
     def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
         result = runner.invoke(main, ["bulk", "type", "feature", "999"], catch_exceptions=False)
         assert "Updated 0 issues. Failed: 1." in result.output
+
+
+# ── Bulk Filter Mode ──────────────────────────────────────
+
+
+def _create_typed_issues(runner):
+    """Create a set of issues with varied attributes for filter testing."""
+    runner.invoke(main, ["new", "Bug A", "-t", "bug", "-p", "p0", "-l", "urgent", "-a", "alice"], catch_exceptions=False)
+    runner.invoke(main, ["new", "Bug B", "-t", "bug", "-p", "p1", "-l", "urgent", "-a", "bob"], catch_exceptions=False)
+    runner.invoke(main, ["new", "Feature C", "-t", "feature", "-p", "p2", "-a", "alice"], catch_exceptions=False)
+    runner.invoke(main, ["new", "Enhancement D", "-t", "enhancement", "-l", "deferred"], catch_exceptions=False)
+    # Close issue #3
+    runner.invoke(main, ["close", "3"], catch_exceptions=False)
+
+
+class TestBulkFilterLabelAdd:
+    def test_filter_by_type(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "label", "add", "release-blocker", "--filter-type", "bug",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues." in result.output
+        assert "release-blocker" in load_issue(initialized_cli, 1).labels
+        assert "release-blocker" in load_issue(initialized_cli, 2).labels
+        assert "release-blocker" not in load_issue(initialized_cli, 3).labels
+
+    def test_filter_by_priority_and_status(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "label", "add", "critical",
+            "--filter-priority", "p0", "--filter-status", "open",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 1 issues." in result.output
+        assert "critical" in load_issue(initialized_cli, 1).labels
+
+    def test_filter_no_match(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "label", "add", "x", "--filter-priority", "p3",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "No issues match the filter criteria." in result.output
+
+    def test_filter_and_ids_conflict(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "label", "add", "x", "1", "--filter-type", "bug",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Cannot use both issue IDs and --filter options." in result.output
+
+    def test_filter_skips_duplicate_label(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "label", "add", "urgent", "--filter-type", "bug",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Skipped: 2." in result.output
+        assert "Updated 0 issues." in result.output
+
+
+class TestBulkFilterLabelRemove:
+    def test_filter_remove(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "label", "remove", "urgent", "--filter-type", "bug",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues." in result.output
+        assert "urgent" not in load_issue(initialized_cli, 1).labels
+        assert "urgent" not in load_issue(initialized_cli, 2).labels
+
+
+class TestBulkFilterAssign:
+    def test_filter_assign(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "assign", "charlie",
+            "--filter-milestone", "v1.0",
+        ], catch_exceptions=False)
+        # No issues have milestone v1.0
+        assert "No issues match the filter criteria." in result.output
+
+    def test_filter_assign_by_label(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "assign", "charlie", "--filter-label", "deferred",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 1 issues." in result.output
+        assert load_issue(initialized_cli, 4).assignee == "charlie"
+
+
+class TestBulkFilterUnassign:
+    def test_filter_unassign(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "unassign", "--filter-assignee", "alice", "--filter-status", "open",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        # Issue #1 is open and assigned to alice; #3 is closed
+        assert "Updated 1 issues." in result.output
+        assert load_issue(initialized_cli, 1).assignee is None
+
+
+class TestBulkFilterPriority:
+    def test_filter_priority(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "priority", "p0", "--filter-type", "bug", "--filter-status", "open",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues." in result.output
+        assert load_issue(initialized_cli, 1).priority == "p0"
+        assert load_issue(initialized_cli, 2).priority == "p0"
+
+
+class TestBulkFilterMilestone:
+    def test_filter_milestone(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "milestone", "v2.0", "--filter-label", "deferred",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 1 issues." in result.output
+        assert load_issue(initialized_cli, 4).milestone == "v2.0"
+
+
+class TestBulkFilterType:
+    def test_filter_type(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "type", "enhancement", "--filter-label", "deferred",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        # Issue #4 already is enhancement, but the command still sets it
+        assert "Updated 1 issues." in result.output
+        assert load_issue(initialized_cli, 4).type == "enhancement"
+
+    def test_filter_and_ids_conflict(self, runner: CliRunner, initialized_cli):
+        _create_typed_issues(runner)
+        result = runner.invoke(main, [
+            "bulk", "type", "bug", "1", "--filter-status", "open",
+        ], catch_exceptions=False)
+        assert "Cannot use both issue IDs and --filter options." in result.output

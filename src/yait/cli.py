@@ -695,8 +695,76 @@ def _try_load(root: Path, issue_id: int) -> Issue | None:
         return None
 
 
-def _bulk_summary(updated: int, failed: int) -> None:
-    click.echo(f"Updated {updated} issues. Failed: {failed}.")
+def _bulk_summary(updated: int, failed: int, skipped: int = 0) -> None:
+    parts = [f"Updated {updated} issues.", f"Failed: {failed}."]
+    if skipped:
+        parts.append(f"Skipped: {skipped}.")
+    click.echo(" ".join(parts))
+
+
+def _has_filters(**kwargs) -> bool:
+    """Return True if any --filter-* option was provided."""
+    return any(v is not None for v in kwargs.values())
+
+
+def _resolve_bulk_issues(root: Path, ids: tuple[int, ...], **filters) -> list[Issue] | None:
+    """Resolve issues from IDs or filters.
+
+    Returns None on error (conflict or no match), printing appropriate message.
+    """
+    has_ids = len(ids) > 0
+    has_filter = _has_filters(**filters)
+
+    if has_ids and has_filter:
+        click.echo("Error: Cannot use both issue IDs and --filter options.")
+        return None
+    if not has_ids and not has_filter:
+        click.echo("Error: Provide issue IDs or --filter options.")
+        return None
+
+    if has_ids:
+        # ID mode: return list with Nones for missing
+        result = []
+        for issue_id in ids:
+            issue = _try_load(root, issue_id)
+            result.append((issue_id, issue))
+        return result
+
+    # Filter mode
+    status = filters.get("filter_status")
+    issues = list_issues(
+        root,
+        status=status,
+        type=filters.get("filter_type"),
+        priority=filters.get("filter_priority"),
+        label=filters.get("filter_label"),
+        assignee=filters.get("filter_assignee"),
+        milestone=filters.get("filter_milestone"),
+    )
+    if not issues:
+        click.echo("No issues match the filter criteria.")
+        return None
+    return [(i.id, i) for i in issues]
+
+
+def bulk_filter_options(f):
+    """Decorator that adds --filter-* options to a bulk command."""
+    f = click.option("--filter-status", default=None,
+                     type=click.Choice(["open", "closed"]),
+                     help="Filter by status")(f)
+    f = click.option("--filter-type", default=None,
+                     type=click.Choice(ISSUE_TYPES),
+                     help="Filter by type")(f)
+    f = click.option("--filter-priority", default=None,
+                     type=click.Choice(PRIORITIES),
+                     help="Filter by priority")(f)
+    f = click.option("--filter-label", default=None,
+                     help="Filter by label")(f)
+    f = click.option("--filter-assignee", default=None,
+                     help="Filter by assignee")(f)
+    f = click.option("--filter-milestone", default=None,
+                     help="Filter by milestone")(f)
+    return f
 
 
 @main.group()
@@ -713,82 +781,110 @@ def bulk_label():
 
 @bulk_label.command(name="add")
 @click.argument("name")
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_label_add(name, ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_label_add(name, ids, filter_status, filter_type, filter_priority,
+                   filter_label, filter_assignee, filter_milestone):
     """Add a label to multiple issues.
 
     \b
-    Example:
+    Examples:
       yait bulk label add urgent 1 2 3 4 5
+      yait bulk label add release-blocker --filter-priority p0 --filter-status open
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    skipped = 0
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
         if name in issue.labels:
             click.echo(f"Issue #{issue_id} already has label '{name}', skipping.")
+            skipped += 1
             continue
         issue.labels.append(name)
         issue.updated_at = _now()
         save_issue(root, issue)
         git_commit(root, f"yait: bulk label #{issue_id} +{name}")
         updated += 1
-    _bulk_summary(updated, failed)
+    _bulk_summary(updated, failed, skipped)
 
 
 @bulk_label.command(name="remove")
 @click.argument("name")
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_label_remove(name, ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_label_remove(name, ids, filter_status, filter_type, filter_priority,
+                      filter_label, filter_assignee, filter_milestone):
     """Remove a label from multiple issues.
 
     \b
-    Example:
+    Examples:
       yait bulk label remove urgent 1 2 3
+      yait bulk label remove urgent --filter-status open
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    skipped = 0
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
         if name not in issue.labels:
             click.echo(f"Issue #{issue_id} does not have label '{name}', skipping.")
+            skipped += 1
             continue
         issue.labels.remove(name)
         issue.updated_at = _now()
         save_issue(root, issue)
         git_commit(root, f"yait: bulk label #{issue_id} -{name}")
         updated += 1
-    _bulk_summary(updated, failed)
+    _bulk_summary(updated, failed, skipped)
 
 
 # ── bulk assign / unassign ──────────────────────────────────
 
 @bulk.command(name="assign")
 @click.argument("name")
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_assign(name, ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_assign(name, ids, filter_status, filter_type, filter_priority,
+                filter_label, filter_assignee, filter_milestone):
     """Assign multiple issues to someone.
 
     \b
-    Example:
+    Examples:
       yait bulk assign alice 1 2 3
+      yait bulk assign alice --filter-milestone v1.0 --filter-status open
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
@@ -801,20 +897,28 @@ def bulk_assign(name, ids):
 
 
 @bulk.command(name="unassign")
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_unassign(ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_unassign(ids, filter_status, filter_type, filter_priority,
+                  filter_label, filter_assignee, filter_milestone):
     """Remove assignee from multiple issues.
 
     \b
-    Example:
+    Examples:
       yait bulk unassign 1 2 3
+      yait bulk unassign --filter-status open --filter-assignee alice
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
@@ -830,20 +934,28 @@ def bulk_unassign(ids):
 
 @bulk.command(name="priority")
 @click.argument("value", type=click.Choice(PRIORITIES))
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_priority(value, ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_priority(value, ids, filter_status, filter_type, filter_priority,
+                  filter_label, filter_assignee, filter_milestone):
     """Set priority on multiple issues.
 
     \b
-    Example:
+    Examples:
       yait bulk priority p0 1 2 3
+      yait bulk priority p1 --filter-type bug --filter-status open
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
@@ -859,20 +971,28 @@ def bulk_priority(value, ids):
 
 @bulk.command(name="milestone")
 @click.argument("value")
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_milestone(value, ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_milestone(value, ids, filter_status, filter_type, filter_priority,
+                   filter_label, filter_assignee, filter_milestone):
     """Set milestone on multiple issues.
 
     \b
-    Example:
+    Examples:
       yait bulk milestone v1.0 1 2 3
+      yait bulk milestone v2.0 --filter-label deferred
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
@@ -888,20 +1008,28 @@ def bulk_milestone(value, ids):
 
 @bulk.command(name="type")
 @click.argument("value", type=click.Choice(ISSUE_TYPES))
-@click.argument("ids", nargs=-1, type=int, required=True)
-def bulk_type(value, ids):
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+def bulk_type(value, ids, filter_status, filter_type, filter_priority,
+              filter_label, filter_assignee, filter_milestone):
     """Set type on multiple issues.
 
     \b
-    Example:
+    Examples:
       yait bulk type bug 1 2 3
+      yait bulk type enhancement --filter-label improvement
     """
     root = _root()
     _require_init(root)
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
     updated = 0
     failed = 0
-    for issue_id in ids:
-        issue = _try_load(root, issue_id)
+    for issue_id, issue in pairs:
         if issue is None:
             failed += 1
             continue
