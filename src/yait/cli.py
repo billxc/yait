@@ -12,13 +12,15 @@ import io
 import sys
 
 import click
+import yaml
 
 from . import __version__
 from .git_ops import git_commit, git_log, is_git_repo
-from .models import ISSUE_TYPES, PRIORITIES, MILESTONE_STATUSES, Issue, Milestone
+from .models import ISSUE_TYPES, PRIORITIES, MILESTONE_STATUSES, Issue, Milestone, Template
 from .store import (
     init_store, is_initialized, list_issues, load_issue, next_id, save_issue, delete_issue,
     save_milestone, load_milestone, list_milestones, update_milestone, delete_milestone,
+    save_template, load_template, list_templates, delete_template,
 )
 
 
@@ -145,14 +147,15 @@ def init():
 @main.command(context_settings=dict(ignore_unknown_options=True))
 @click.argument("title", required=False, default=None)
 @click.option("--title", "title_opt", default=None, help="Issue title")
-@click.option("--type", "-t", default="misc", type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
-@click.option("--priority", "-p", default="none", type=click.Choice(PRIORITIES), help="Priority (default: none)")
+@click.option("--type", "-t", "type", default=None, type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
+@click.option("--priority", "-p", default=None, type=click.Choice(PRIORITIES), help="Priority (default: none)")
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")
 @click.option("--assign", "-a", default=None, help="Assignee")
 @click.option("--body", "-b", default=None, help="Issue body text (use '-' for stdin)")
 @click.option("--body-file", default=None, help="Read body from file")
 @click.option("--milestone", "-m", default=None, help="Milestone (e.g. v1.0)")
-def new(title, title_opt, type, priority, label, assign, body, body_file, milestone):
+@click.option("--template", "template_name", default=None, help="Create from template")
+def new(title, title_opt, type, priority, label, assign, body, body_file, milestone, template_name):
     """Create a new issue.
 
     \b
@@ -164,22 +167,47 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
       yait new "Release prep" --milestone v1.0
       yait new "Long desc" --body-file notes.md
       echo "body" | yait new "From stdin" --body -
+      yait new "Login crash" --template bug
     """
     resolved = title or title_opt
     if not resolved or not resolved.strip():
         raise click.ClickException("Title cannot be empty or whitespace only")
     root = _root()
     _require_init(root)
+
+    # Load template defaults if specified
+    tmpl_type = "misc"
+    tmpl_priority = "none"
+    tmpl_labels: list[str] = []
+    tmpl_body = ""
+    if template_name:
+        try:
+            tmpl = load_template(root, template_name)
+        except FileNotFoundError as e:
+            raise click.ClickException(str(e))
+        tmpl_type = tmpl.type
+        tmpl_priority = tmpl.priority
+        tmpl_labels = list(tmpl.labels)
+        tmpl_body = tmpl.body
+
+    # CLI args override template values
+    final_type = type if type is not None else tmpl_type
+    final_priority = priority if priority is not None else tmpl_priority
+    final_labels = list(label) if label else tmpl_labels
+
     resolved_body = _read_body(body, body_file)
+    if not resolved_body and tmpl_body:
+        resolved_body = tmpl_body
+
     now = _now()
     nid = next_id(root)
     issue = Issue(
         id=nid,
         title=resolved,
         status="open",
-        type=type,
-        priority=priority,
-        labels=list(label),
+        type=final_type,
+        priority=final_priority,
+        labels=final_labels,
         assignee=assign,
         milestone=milestone,
         created_at=now,
@@ -699,6 +727,118 @@ def milestone_delete(name, force):
         raise click.ClickException(str(e).replace("force=True", "--force"))
     click.echo(f"Deleted milestone '{name}'")
     git_commit(root, f"yait: delete milestone '{name}'")
+
+
+# ── template ───────────────────────────────────────────────
+
+@main.group()
+def template():
+    """Manage issue templates."""
+
+
+@template.command(name="create")
+@click.argument("name")
+def template_create(name):
+    """Create or edit an issue template.
+
+    \b
+    Opens $EDITOR to define template frontmatter and body.
+
+    \b
+    Examples:
+      yait template create bug
+      yait template create feature
+    """
+    root = _root()
+    _require_init(root)
+    try:
+        existing = load_template(root, name)
+        fm = {
+            "name": existing.name,
+            "type": existing.type,
+            "priority": existing.priority,
+            "labels": existing.labels,
+        }
+        initial = "---\n" + yaml.dump(fm, default_flow_style=False).rstrip("\n") + "\n---\n"
+        if existing.body:
+            initial += "\n" + existing.body + "\n"
+    except FileNotFoundError:
+        fm = {
+            "name": name,
+            "type": "misc",
+            "priority": "none",
+            "labels": [],
+        }
+        initial = "---\n" + yaml.dump(fm, default_flow_style=False).rstrip("\n") + "\n---\n"
+        initial += "\n"
+
+    result = click.edit(initial)
+    if result is None:
+        click.echo("Aborted: editor returned empty.")
+        return
+
+    text = result.strip()
+    if not text.startswith("---"):
+        raise click.ClickException("Invalid template: missing YAML frontmatter (---).")
+
+    try:
+        end_idx = text.index("---", 3)
+    except ValueError:
+        raise click.ClickException("Invalid template: missing closing --- delimiter.")
+    fm_text = text[3:end_idx].strip()
+    body = text[end_idx + 3:].strip()
+    fm = yaml.safe_load(fm_text) or {}
+
+    tmpl = Template(
+        name=fm.get("name", name),
+        type=fm.get("type", "misc"),
+        priority=fm.get("priority", "none"),
+        labels=fm.get("labels") or [],
+        body=body,
+    )
+    save_template(root, tmpl)
+    click.echo(f"Saved template '{tmpl.name}'")
+    git_commit(root, f"yait: save template '{tmpl.name}'")
+
+
+@template.command(name="list")
+def template_list():
+    """List available templates.
+
+    \b
+    Examples:
+      yait template list
+    """
+    root = _root()
+    _require_init(root)
+    templates = list_templates(root)
+    if not templates:
+        click.echo("No templates found.")
+        return
+    header = f"{'NAME':<16}  {'TYPE':<12}  {'PRIORITY':<8}  LABELS"
+    click.echo(click.style(header, bold=True))
+    for t in templates:
+        labels = ",".join(t.labels) if t.labels else "\u2014"
+        click.echo(f"{t.name:<16}  {t.type:<12}  {t.priority:<8}  {labels}")
+
+
+@template.command(name="delete")
+@click.argument("name")
+def template_delete(name):
+    """Delete a template.
+
+    \b
+    Examples:
+      yait template delete bug
+    """
+    root = _root()
+    _require_init(root)
+    try:
+        delete_template(root, name)
+    except FileNotFoundError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Deleted template '{name}'")
+    git_commit(root, f"yait: delete template '{name}'")
 
 
 # ── search ───────────────────────────────────────────────────

@@ -69,3 +69,12 @@ class Milestone:
             raise ValueError(
                 f"Invalid due_date format: {self.due_date!r} (expected YYYY-MM-DD)"
             )
+
+
+@dataclass
+class Template:
+    name: str
+    type: str = "misc"
+    priority: str = "none"
+    labels: list[str] = field(default_factory=list)
+    body: str = ""
