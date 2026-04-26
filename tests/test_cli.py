@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import json
 import pytest
 from click.testing import CliRunner
 
@@ -218,3 +219,99 @@ class TestSearch:
         )
         assert "Login bug" in result.output
         assert "Login feature" not in result.output
+
+
+class TestCloseMultiple:
+    def test_close_multiple(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Issue A"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Issue B"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Issue C"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["close", "1", "2", "3"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Closed issue #1" in result.output
+        assert "Closed issue #2" in result.output
+        assert "Closed issue #3" in result.output
+        assert load_issue(initialized_cli, 1).status == "closed"
+        assert load_issue(initialized_cli, 2).status == "closed"
+        assert load_issue(initialized_cli, 3).status == "closed"
+
+
+class TestReopenMultiple:
+    def test_reopen_multiple(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Issue A"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Issue B"], catch_exceptions=False)
+        runner.invoke(main, ["close", "1", "2"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["reopen", "1", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Reopened issue #1" in result.output
+        assert "Reopened issue #2" in result.output
+        assert load_issue(initialized_cli, 1).status == "open"
+        assert load_issue(initialized_cli, 2).status == "open"
+
+
+class TestListJson:
+    def test_list_json(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "JSON test", "--type", "bug", "-l", "urgent"], catch_exceptions=False)
+        result = runner.invoke(main, ["list", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["title"] == "JSON test"
+        assert data[0]["type"] == "bug"
+        assert data[0]["labels"] == ["urgent"]
+        assert data[0]["status"] == "open"
+
+
+class TestShowJson:
+    def test_show_json(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Detail JSON", "-b", "body text", "--type", "feature"], catch_exceptions=False)
+        result = runner.invoke(main, ["show", "1", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["id"] == 1
+        assert data["title"] == "Detail JSON"
+        assert data["body"] == "body text"
+        assert data["type"] == "feature"
+
+
+class TestSearchJson:
+    def test_search_json(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Login bug"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Signup feature"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "login", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["title"] == "Login bug"
+
+
+class TestStats:
+    def test_stats(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Bug 1", "--type", "bug", "-l", "urgent"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Bug 2", "--type", "bug", "-l", "urgent", "-l", "backend"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Feature 1", "--type", "feature"], catch_exceptions=False)
+        runner.invoke(main, ["close", "3"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "3 total" in result.output
+        assert "2 open" in result.output
+        assert "1 closed" in result.output
+        assert "bug=2" in result.output
+        assert "feature=1" in result.output
+        assert "urgent=2" in result.output
+        assert "backend=1" in result.output
+
+
+class TestListSort:
+    def test_list_sort_by_created(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "First"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Second"], catch_exceptions=False)
+        result = runner.invoke(main, ["list", "--sort", "created", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 2
+        assert data[0]["title"] == "First"
+        assert data[1]["title"] == "Second"
