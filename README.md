@@ -2,6 +2,8 @@
 
 A local issue tracker built on markdown files and git. Every issue is a `.md` file with YAML frontmatter; all changes are automatically committed to git history.
 
+**v0.5.0** — milestones, bulk editing, templates, design docs, issue linking, and more.
+
 ## Install
 
 **Requirements:** Python 3.10+, git, [uv](https://docs.astral.sh/uv/)
@@ -15,179 +17,172 @@ After installation, use `uv run yait` or activate the venv (`source .venv/bin/ac
 ## Quick Start
 
 ```bash
-# Initialize yait in a git repo
 cd my-project
 yait init
-# → Initialized yait in .yait/
 
 # Create issues
-yait new --title "Fix login bug" --type bug -l auth -a bill
-# → Created issue #1: Fix login bug
+yait new "Fix login bug" -t bug -l auth -a bill --priority p0
+yait new "Add dark mode" -t feature --milestone v1.0
 
-yait new --title "Add dark mode" --type feature
-# → Created issue #2: Add dark mode
-
-# List open issues
+# List & search
 yait list
-# #   STATUS  TITLE              LABELS  ASSIGNEE
-# #1  open    Fix login bug      auth    bill
-# #2  open    Add dark mode      —       —
+yait list --type bug --milestone v1.0 --wide
+yait search "login" --label auth --title-only
 
-# View details
-yait show 1
-
-# Close an issue
+# Manage
 yait close 1
-# → Closed issue #1: Fix login bug
+yait edit 1 -T "New title" --priority p1
+yait assign 1 alice
 
-# Search
-yait search "login"
+# Stats
+yait stats
+yait stats --by milestone --json
 ```
+
+## Features
+
+| Category | Features |
+|----------|----------|
+| **Core CRUD** | `new`, `show`, `close`, `reopen`, `delete`, `edit`, `comment` |
+| **Labels & Assignment** | `label add/remove`, `assign`, `unassign` |
+| **Milestones** | `milestone create/list/show/close/reopen/edit/delete` |
+| **Bulk Editing** | `bulk label/assign/unassign/priority/milestone/type` with ID list or `--filter-*` |
+| **Search** | Full-text, `--regex`, `--title-only`, `--count`, multi-field filters |
+| **Statistics** | `stats` with `--by type/priority/label/milestone/assignee`, `--json` |
+| **Templates** | `template create/list/delete`, `new --template` |
+| **Design Docs** | `doc create/show/list/edit/delete/link/unlink` |
+| **Issue Linking** | `link` (blocks/depends-on/relates-to), `unlink` |
+| **Config** | `config set/reset` for defaults (type, priority, assignee) and display settings |
+| **Output Formats** | `--compact`, `--wide`, auto-detect terminal width, `--json` |
+| **Import/Export** | `export --format json/csv`, `import` from JSON |
+| **History** | `log` — git-based change history per issue |
 
 ## Command Reference
 
-### `yait init`
-
-Initialize yait in the current directory. Creates `.yait/` directory structure and commits.
+### Core
 
 ```bash
-yait init
+yait init                              # Initialize .yait/ in current repo
+yait new "Title" [options]             # Create issue
+yait show <id> [--json]                # Show issue details
+yait close <id> [id...]                # Close issue(s)
+yait reopen <id> [id...]               # Reopen issue(s)
+yait delete <id> [-f]                  # Delete issue permanently
+yait edit <id> [options]               # Edit inline or open $EDITOR
+yait comment <id> -m "text"            # Add comment
+yait assign <id> <name>                # Assign issue
+yait unassign <id>                     # Remove assignee
 ```
 
-Fails if `.yait/` already exists.
+**`new` options:** `--title`, `--type/-t`, `--priority/-p`, `--label/-l` (repeatable), `--assign/-a`, `--body/-b` (`-` for stdin), `--body-file`, `--milestone/-m`, `--template`
 
-### `yait new`
+**`edit` options:** `--title/-T`, `--type/-t`, `--priority/-p`, `--assign/-a`, `--body/-b`, `--body-file`, `--milestone/-m`
 
-Create a new issue.
+### List & Search
 
 ```bash
-yait new --title "Title" [--type bug] [-l label] [-a assignee] [-b "body text"]
+yait list [--status open|closed|all] [--type X] [--priority X]
+          [--label X] [--assignee X] [--milestone X]
+          [--sort id|created|updated] [--json]
+          [--compact | --wide]
+          [--has-doc | --no-doc | --doc <slug>]
+
+yait search "query" [--status X] [--type X] [--priority X]
+            [--label X] [--assignee X] [--milestone X]
+            [--regex] [--title-only] [--count] [--json]
+            [--compact | --wide]
+
+yait stats [--by type|priority|label|milestone|assignee] [--json]
 ```
 
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--title` | | Issue title (required) |
-| `--type` | | Issue type: `feature`, `bug`, `enhancement`, `misc` (default: `misc`) |
-| `--label` | `-l` | Add label (repeatable) |
-| `--assign` | `-a` | Assignee name |
-| `--body` | `-b` | Issue body text |
-
-Examples:
+### Milestones
 
 ```bash
-yait new --title "Crash on startup" --type bug -l urgent -l crash -a alice
-yait new --title "Improve docs" --type enhancement
-yait new --title "Random note"  # type defaults to misc
+yait milestone create <name> [--description X] [--due YYYY-MM-DD]
+yait milestone list [--status open|closed] [--json]
+yait milestone show <name> [--json]
+yait milestone close <name>
+yait milestone reopen <name>
+yait milestone edit <name> [--description X] [--due X]
+yait milestone delete <name> [--force]
 ```
 
-### `yait list`
+### Bulk Operations
 
-List issues with optional filters.
+Accepts issue IDs or `--filter-*` options (status, type, priority, label, assignee, milestone).
 
 ```bash
-yait list [--status open|closed|all] [--type bug] [--label x] [--assignee x]
+yait bulk label add <name> <ids...>
+yait bulk label remove <name> <ids...>
+yait bulk assign <name> <ids...>
+yait bulk unassign <ids...>
+yait bulk priority <p0-p3|none> <ids...>
+yait bulk milestone <name> <ids...>
+yait bulk type <type> <ids...>
+
+# Filter mode example
+yait bulk label add release-blocker --filter-priority p0 --filter-status open
+yait bulk assign alice --filter-milestone v1.0
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--status` | `open` | Filter by status: `open`, `closed`, `all` |
-| `--type` | | Filter by issue type |
-| `--label` | | Filter by label |
-| `--assignee` | | Filter by assignee |
-
-Examples:
+### Templates
 
 ```bash
-yait list                    # all open issues
-yait list --status all       # everything
-yait list --status closed    # closed only
-yait list --type bug         # open bugs
-yait list --label urgent     # open issues labeled "urgent"
-yait list --assignee alice   # open issues assigned to alice
+yait template create <name>       # Opens $EDITOR
+yait template list
+yait template delete <name>
+yait new "Title" --template bug   # Create from template
 ```
 
-### `yait show <id>`
-
-Show full details of an issue including frontmatter fields and body.
+### Design Documents
 
 ```bash
-yait show 1
-# #1  [open]  Fix login bug
-# Labels: urgent, auth
-# Assignee: bill
-# Created: 2026-04-26T16:00:00+08:00
-# Updated: 2026-04-26T16:00:00+08:00
-#
-# Issue description here.
+yait doc create <slug> --title "Title" [-b "body" | --body-file X]
+yait doc show <slug> [--json]
+yait doc list [--json]
+yait doc edit <slug> [--title X] [-b "body"]
+yait doc delete <slug> [-f]
+yait doc link <id> [id...] <slug-or-path>    # Link doc to issue(s)
+yait doc unlink <id> <slug-or-path>
 ```
 
-### `yait close <id>`
+Supports managed docs (stored in `.yait/docs/`) and external file references (paths with `/`).
 
-Close an issue. Updates status to `closed`, sets `updated_at`, and commits.
+### Issue Linking
 
 ```bash
-yait close 1
-# → Closed issue #1: Fix login bug
+yait link <source> blocks <target>
+yait link <source> depends-on <target>
+yait link <source> relates-to <target>
+yait unlink <source> <target>
 ```
 
-No-op if already closed.
+Links are bidirectional — `link 3 blocks 5` also adds `blocked-by` on #5.
 
-### `yait reopen <id>`
-
-Reopen a closed issue. Updates status back to `open` and commits.
+### Config
 
 ```bash
-yait reopen 1
-# → Reopened issue #1: Fix login bug
+yait config                            # Show all settings
+yait config set defaults.type bug      # Set default issue type
+yait config set defaults.priority p2
+yait config set display.max_title_width 60
+yait config reset defaults.type        # Reset to default
 ```
 
-No-op if already open.
-
-### `yait comment <id> -m "text"`
-
-Append a comment to an issue. The comment is added to the markdown body with a timestamp separator.
+### Import/Export
 
 ```bash
-yait comment 1 -m "Fixed in commit abc123"
-# → Added comment to issue #1
+yait export [--format json|csv] [-o file]
+yait import issues.json
 ```
 
-### `yait edit <id>`
-
-Open the issue in `$EDITOR` for freeform editing. The editor receives the title and body; on save, both are updated and committed.
+### History
 
 ```bash
-yait edit 1
+yait log [<id>] [-n 20]     # Git-based change log
 ```
-
-If the editor exits without changes, the edit is cancelled.
-
-### `yait label add <id> <name>` / `yait label remove <id> <name>`
-
-Add or remove a label from an issue.
-
-```bash
-yait label add 1 urgent
-yait label remove 1 urgent
-```
-
-Duplicate adds are rejected with a message; removing a non-existent label is also a no-op.
-
-### `yait search <query>`
-
-Full-text search across issue titles and bodies (case-insensitive).
-
-```bash
-yait search "login" [--status open|closed|all]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--status` | `all` | Filter results by status |
 
 ## Issue Types
-
-Each issue has a `type` field. Valid types:
 
 | Type | Use case |
 |------|----------|
@@ -196,115 +191,55 @@ Each issue has a `type` field. Valid types:
 | `enhancement` | Improvement to existing functionality |
 | `misc` | Everything else (default) |
 
-Set at creation with `--type`. When omitted, defaults to `misc`. Can also be changed via `yait edit`.
+## Priority Levels
+
+`p0` (critical), `p1` (high), `p2` (medium), `p3` (low), `none` (default)
 
 ## Data Format
-
-### Directory structure
 
 ```
 project-root/
 └── .yait/
-    ├── config.yaml        # next_id counter, version
-    └── issues/
-        ├── 1.md
-        ├── 2.md
+    ├── config.yaml          # next_id, milestones, defaults, display
+    ├── issues/
+    │   ├── 1.md
+    │   └── ...
+    ├── templates/
+    │   ├── bug.md
+    │   └── ...
+    └── docs/
+        ├── auth-prd.md
         └── ...
 ```
 
-### config.yaml
+### Issue frontmatter fields
 
-```yaml
-version: 1
-next_id: 3
-```
-
-### Issue file (`.yait/issues/<id>.md`)
-
-```markdown
----
-id: 1
-title: "Fix login bug"
-status: open
-type: bug
-labels: [urgent, auth]
-assignee: bill
-created_at: "2026-04-26T16:00:00+08:00"
-updated_at: "2026-04-26T16:00:00+08:00"
----
-
-Issue description here.
-
----
-**Comment** (2026-04-26 16:30):
-This is a comment.
-```
-
-### Frontmatter fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | int | yes | Auto-incrementing, starts at 1 |
-| `title` | string | yes | Issue title |
-| `status` | enum | yes | `open` or `closed` |
-| `type` | enum | yes | `feature`, `bug`, `enhancement`, `misc` |
-| `labels` | list[str] | no | Tags, default `[]` |
-| `assignee` | string | no | Responsible person |
-| `created_at` | datetime | yes | ISO 8601 with timezone |
-| `updated_at` | datetime | yes | Updated on every change |
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Auto-incrementing |
+| `title` | string | Issue title |
+| `status` | enum | `open` / `closed` |
+| `type` | enum | `feature`, `bug`, `enhancement`, `misc` |
+| `priority` | enum | `p0`–`p3`, `none` |
+| `labels` | list | Tags |
+| `assignee` | string | Responsible person |
+| `milestone` | string | Milestone reference |
+| `docs` | list | Linked doc slugs/paths |
+| `links` | list | Issue relationships (blocks, depends-on, relates-to) |
+| `created_at` | datetime | ISO 8601 |
+| `updated_at` | datetime | Updated on every change |
 
 ### Git integration
 
-Every write operation (`new`, `close`, `reopen`, `comment`, `edit`, `label add/remove`) automatically stages `.yait/` and creates a git commit. If the working directory is not a git repo, git operations are silently skipped.
-
-Commit message format:
-
-| Operation | Message |
-|-----------|---------|
-| init | `yait: init` |
-| new | `yait: create issue #<id> — <title>` |
-| close | `yait: close issue #<id>` |
-| reopen | `yait: reopen issue #<id>` |
-| comment | `yait: comment on issue #<id>` |
-| edit | `yait: edit #<id>` |
-| label add | `yait: label #<id> +<name>` |
-| label remove | `yait: label #<id> -<name>` |
+Every write operation automatically commits to git. If the working directory is not a git repo, git operations are silently skipped.
 
 ## Development
 
 ```bash
 git clone https://github.com/user/yet-another-issue-tracker.git
 cd yet-another-issue-tracker
-
-# Install with test dependencies
 uv sync --group test
-
-# Run tests
 uv run pytest tests/ -v
-```
-
-### Project layout
-
-```
-yet-another-issue-tracker/
-├── pyproject.toml
-├── README.md
-├── TESTING.md
-├── docs/
-│   └── PRD.md
-├── src/
-│   └── yait/
-│       ├── __init__.py
-│       ├── cli.py          # Click CLI entry point
-│       ├── git_ops.py      # Git operations
-│       ├── models.py       # Issue dataclass
-│       └── store.py        # File I/O and config
-└── tests/
-    ├── conftest.py         # Shared fixtures
-    ├── test_cli.py         # CLI end-to-end tests
-    ├── test_git_ops.py     # Git integration tests
-    ├── test_models.py      # Unit tests for Issue dataclass
-    └── test_store.py       # Store integration tests
 ```
 
 ## License
