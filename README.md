@@ -8,7 +8,19 @@ A local issue tracker built on markdown files and git. Every issue is a `.md` fi
 
 **Requirements:** Python 3.10+, git, [uv](https://docs.astral.sh/uv/)
 
+### Install (recommended)
+
 ```bash
+uv tool install git+https://github.com/billxc/yait
+```
+
+This installs `yait` globally — use it directly from any directory.
+
+### Install (development)
+
+```bash
+git clone https://github.com/billxc/yait.git
+cd yait
 uv sync
 ```
 
@@ -236,8 +248,8 @@ Every write operation automatically commits to git. If the working directory is 
 ## Development
 
 ```bash
-git clone https://github.com/user/yet-another-issue-tracker.git
-cd yet-another-issue-tracker
+git clone https://github.com/billxc/yait.git
+cd yait
 uv sync --group test
 uv run pytest tests/ -v
 ```
