@@ -682,3 +682,232 @@ def import_cmd(file):
         git_commit(root, f"yait: import {imported} issues")
 
     click.echo(f"Imported {imported} issues, skipped {skipped}.")
+
+
+# ── bulk ───────────────────────────────────────────────────
+
+def _try_load(root: Path, issue_id: int) -> Issue | None:
+    """Load an issue, returning None (with a warning) if not found."""
+    try:
+        return load_issue(root, issue_id)
+    except (FileNotFoundError, ValueError):
+        click.echo(f"Warning: issue #{issue_id} not found, skipping.", err=True)
+        return None
+
+
+def _bulk_summary(updated: int, failed: int) -> None:
+    click.echo(f"Updated {updated} issues. Failed: {failed}.")
+
+
+@main.group()
+def bulk():
+    """Batch operations on multiple issues."""
+
+
+# ── bulk label ──────────────────────────────────────────────
+
+@bulk.group(name="label")
+def bulk_label():
+    """Bulk label operations."""
+
+
+@bulk_label.command(name="add")
+@click.argument("name")
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_label_add(name, ids):
+    """Add a label to multiple issues.
+
+    \b
+    Example:
+      yait bulk label add urgent 1 2 3 4 5
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        if name in issue.labels:
+            click.echo(f"Issue #{issue_id} already has label '{name}', skipping.")
+            continue
+        issue.labels.append(name)
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk label #{issue_id} +{name}")
+        updated += 1
+    _bulk_summary(updated, failed)
+
+
+@bulk_label.command(name="remove")
+@click.argument("name")
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_label_remove(name, ids):
+    """Remove a label from multiple issues.
+
+    \b
+    Example:
+      yait bulk label remove urgent 1 2 3
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        if name not in issue.labels:
+            click.echo(f"Issue #{issue_id} does not have label '{name}', skipping.")
+            continue
+        issue.labels.remove(name)
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk label #{issue_id} -{name}")
+        updated += 1
+    _bulk_summary(updated, failed)
+
+
+# ── bulk assign / unassign ──────────────────────────────────
+
+@bulk.command(name="assign")
+@click.argument("name")
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_assign(name, ids):
+    """Assign multiple issues to someone.
+
+    \b
+    Example:
+      yait bulk assign alice 1 2 3
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        issue.assignee = name
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk assign #{issue_id} to {name}")
+        updated += 1
+    _bulk_summary(updated, failed)
+
+
+@bulk.command(name="unassign")
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_unassign(ids):
+    """Remove assignee from multiple issues.
+
+    \b
+    Example:
+      yait bulk unassign 1 2 3
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        issue.assignee = None
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk unassign #{issue_id}")
+        updated += 1
+    _bulk_summary(updated, failed)
+
+
+# ── bulk priority ───────────────────────────────────────────
+
+@bulk.command(name="priority")
+@click.argument("value", type=click.Choice(PRIORITIES))
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_priority(value, ids):
+    """Set priority on multiple issues.
+
+    \b
+    Example:
+      yait bulk priority p0 1 2 3
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        issue.priority = value
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk priority #{issue_id} -> {value}")
+        updated += 1
+    _bulk_summary(updated, failed)
+
+
+# ── bulk milestone ──────────────────────────────────────────
+
+@bulk.command(name="milestone")
+@click.argument("value")
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_milestone(value, ids):
+    """Set milestone on multiple issues.
+
+    \b
+    Example:
+      yait bulk milestone v1.0 1 2 3
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        issue.milestone = value
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk milestone #{issue_id} -> {value}")
+        updated += 1
+    _bulk_summary(updated, failed)
+
+
+# ── bulk type ───────────────────────────────────────────────
+
+@bulk.command(name="type")
+@click.argument("value", type=click.Choice(ISSUE_TYPES))
+@click.argument("ids", nargs=-1, type=int, required=True)
+def bulk_type(value, ids):
+    """Set type on multiple issues.
+
+    \b
+    Example:
+      yait bulk type bug 1 2 3
+    """
+    root = _root()
+    _require_init(root)
+    updated = 0
+    failed = 0
+    for issue_id in ids:
+        issue = _try_load(root, issue_id)
+        if issue is None:
+            failed += 1
+            continue
+        issue.type = value
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        git_commit(root, f"yait: bulk type #{issue_id} -> {value}")
+        updated += 1
+    _bulk_summary(updated, failed)

@@ -561,3 +561,142 @@ class TestImport:
         assert result.exit_code == 0
         assert "skipped 1" in result.output
         assert "Imported 1" in result.output
+
+
+# ── Bulk Commands ──────────────────────────────────────────
+
+
+def _create_issues(runner, n=3):
+    """Helper: create n issues."""
+    for i in range(1, n + 1):
+        runner.invoke(main, ["new", f"Issue {i}"], catch_exceptions=False)
+
+
+class TestBulkLabelAdd:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 3)
+        result = runner.invoke(main, ["bulk", "label", "add", "urgent", "1", "2", "3"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 3 issues. Failed: 0." in result.output
+        for i in range(1, 4):
+            assert "urgent" in load_issue(initialized_cli, i).labels
+
+    def test_skip_duplicate(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "Test", "-l", "urgent"], catch_exceptions=False)
+        result = runner.invoke(main, ["bulk", "label", "add", "urgent", "1"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "already" in result.output
+        assert "Updated 0 issues. Failed: 0." in result.output
+        assert load_issue(initialized_cli, 1).labels.count("urgent") == 1
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 1)
+        result = runner.invoke(main, ["bulk", "label", "add", "urgent", "1", "999"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 1 issues. Failed: 1." in result.output
+        assert "urgent" in load_issue(initialized_cli, 1).labels
+
+
+class TestBulkLabelRemove:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "A", "-l", "urgent"], catch_exceptions=False)
+        runner.invoke(main, ["new", "B", "-l", "urgent"], catch_exceptions=False)
+        result = runner.invoke(main, ["bulk", "label", "remove", "urgent", "1", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues. Failed: 0." in result.output
+        for i in range(1, 3):
+            assert "urgent" not in load_issue(initialized_cli, i).labels
+
+    def test_skip_missing_label(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 1)
+        result = runner.invoke(main, ["bulk", "label", "remove", "nope", "1"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "does not have" in result.output
+        assert "Updated 0 issues. Failed: 0." in result.output
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["bulk", "label", "remove", "x", "999"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 0 issues. Failed: 1." in result.output
+
+
+class TestBulkAssign:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 3)
+        result = runner.invoke(main, ["bulk", "assign", "alice", "1", "2", "3"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 3 issues. Failed: 0." in result.output
+        for i in range(1, 4):
+            assert load_issue(initialized_cli, i).assignee == "alice"
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 1)
+        result = runner.invoke(main, ["bulk", "assign", "bob", "1", "999"], catch_exceptions=False)
+        assert "Updated 1 issues. Failed: 1." in result.output
+
+
+class TestBulkUnassign:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "A", "-a", "alice"], catch_exceptions=False)
+        runner.invoke(main, ["new", "B", "-a", "bob"], catch_exceptions=False)
+        result = runner.invoke(main, ["bulk", "unassign", "1", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues. Failed: 0." in result.output
+        for i in range(1, 3):
+            assert load_issue(initialized_cli, i).assignee is None
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["bulk", "unassign", "999"], catch_exceptions=False)
+        assert "Updated 0 issues. Failed: 1." in result.output
+
+
+class TestBulkPriority:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 2)
+        result = runner.invoke(main, ["bulk", "priority", "p0", "1", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues. Failed: 0." in result.output
+        for i in range(1, 3):
+            assert load_issue(initialized_cli, i).priority == "p0"
+
+    def test_invalid_priority(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 1)
+        result = runner.invoke(main, ["bulk", "priority", "invalid", "1"])
+        assert result.exit_code != 0
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["bulk", "priority", "p1", "999"], catch_exceptions=False)
+        assert "Updated 0 issues. Failed: 1." in result.output
+
+
+class TestBulkMilestone:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 2)
+        result = runner.invoke(main, ["bulk", "milestone", "v1.0", "1", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues. Failed: 0." in result.output
+        for i in range(1, 3):
+            assert load_issue(initialized_cli, i).milestone == "v1.0"
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["bulk", "milestone", "v2.0", "999"], catch_exceptions=False)
+        assert "Updated 0 issues. Failed: 1." in result.output
+
+
+class TestBulkType:
+    def test_basic(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 2)
+        result = runner.invoke(main, ["bulk", "type", "bug", "1", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated 2 issues. Failed: 0." in result.output
+        for i in range(1, 3):
+            assert load_issue(initialized_cli, i).type == "bug"
+
+    def test_invalid_type(self, runner: CliRunner, initialized_cli):
+        _create_issues(runner, 1)
+        result = runner.invoke(main, ["bulk", "type", "invalid", "1"])
+        assert result.exit_code != 0
+
+    def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["bulk", "type", "feature", "999"], catch_exceptions=False)
+        assert "Updated 0 issues. Failed: 1." in result.output
