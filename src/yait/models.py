@@ -7,6 +7,15 @@ PRIORITIES = ("p0", "p1", "p2", "p3", "none")
 MILESTONE_STATUSES = ("open", "closed")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+LINK_TYPES = ("blocks", "blocked-by", "depends-on", "depended-by", "relates-to")
+LINK_REVERSE: dict[str, str] = {
+    "blocks": "blocked-by",
+    "blocked-by": "blocks",
+    "depends-on": "depended-by",
+    "depended-by": "depends-on",
+    "relates-to": "relates-to",
+}
+
 
 @dataclass
 class Issue:
@@ -22,6 +31,7 @@ class Issue:
     updated_at: str = ""
     body: str = ""
     docs: list[str] = field(default_factory=list)
+    links: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -37,6 +47,7 @@ class Issue:
             "updated_at": self.updated_at,
             "body": self.body,
             "docs": self.docs,
+            "links": self.links,
         }
 
 

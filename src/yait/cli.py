@@ -1153,13 +1153,14 @@ def export_cmd(fmt, outfile):
         text = json.dumps(data, indent=2, ensure_ascii=False)
     else:
         buf = io.StringIO()
-        fieldnames = ["id", "title", "status", "type", "priority", "labels", "assignee", "milestone", "created_at", "updated_at", "body", "docs"]
+        fieldnames = ["id", "title", "status", "type", "priority", "labels", "assignee", "milestone", "created_at", "updated_at", "body", "docs", "links"]
         writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for row in data:
             row = dict(row)
             row["labels"] = ",".join(row["labels"]) if row["labels"] else ""
             row["docs"] = ",".join(row["docs"]) if row["docs"] else ""
+            row["links"] = json.dumps(row["links"]) if row["links"] else ""
             writer.writerow(row)
         text = buf.getvalue()
 

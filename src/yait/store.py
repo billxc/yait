@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import Issue, Milestone, Template, Doc
+from .models import Issue, Milestone, Template, Doc, LINK_TYPES, LINK_REVERSE
 
 YAIT_DIR = ".yait"
 ISSUES_DIR = "issues"
@@ -94,6 +94,7 @@ def save_issue(root: Path, issue: Issue) -> None:
         "created_at": issue.created_at,
         "updated_at": issue.updated_at,
         "docs": issue.docs,
+        "links": issue.links,
     }
     text = "---\n" + yaml.dump(fm, default_flow_style=False).rstrip("\n") + "\n---\n"
     if issue.body:
@@ -125,6 +126,7 @@ def load_issue(root: Path, issue_id: int) -> Issue:
         updated_at=fm.get("updated_at", ""),
         body=body,
         docs=fm.get("docs") or [],
+        links=fm.get("links") or [],
     )
 
 
@@ -166,6 +168,47 @@ def list_issues(
             continue
         issues.append(issue)
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Issue Link helpers
+# ---------------------------------------------------------------------------
+
+
+def add_link(root: Path, source_id: int, link_type: str, target_id: int) -> None:
+    if source_id == target_id:
+        raise ValueError("Cannot link an issue to itself")
+    if link_type not in LINK_TYPES:
+        raise ValueError(f"Invalid link type: {link_type!r}")
+
+    source = load_issue(root, source_id)
+    target = load_issue(root, target_id)
+
+    fwd = {"type": link_type, "target": target_id}
+    if fwd in source.links:
+        raise ValueError(
+            f"Link already exists: #{source_id} {link_type} #{target_id}"
+        )
+
+    rev_type = LINK_REVERSE[link_type]
+    rev = {"type": rev_type, "target": source_id}
+
+    source.links.append(fwd)
+    target.links.append(rev)
+
+    save_issue(root, source)
+    save_issue(root, target)
+
+
+def remove_link(root: Path, source_id: int, target_id: int) -> None:
+    source = load_issue(root, source_id)
+    target = load_issue(root, target_id)
+
+    source.links = [l for l in source.links if l.get("target") != target_id]
+    target.links = [l for l in target.links if l.get("target") != source_id]
+
+    save_issue(root, source)
+    save_issue(root, target)
 
 
 # ---------------------------------------------------------------------------
