@@ -194,6 +194,16 @@ def list_milestones(root: Path, status: str | None = None) -> list[Milestone]:
     return result
 
 
+def update_milestone(root: Path, milestone: Milestone) -> None:
+    milestone.validate_due_date()
+    cfg = _read_config(root)
+    ms = _get_milestones(cfg)
+    if milestone.name not in ms:
+        raise KeyError(f"Milestone {milestone.name!r} not found")
+    ms[milestone.name] = milestone.to_dict()
+    _write_config(root, cfg)
+
+
 def delete_milestone(root: Path, name: str, force: bool = False) -> None:
     cfg = _read_config(root)
     ms = _get_milestones(cfg)

@@ -5,7 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from yait.cli import main
-from yait.store import load_issue
+from yait.store import load_issue, load_milestone, list_milestones
 
 
 @pytest.fixture
@@ -561,3 +561,249 @@ class TestImport:
         assert result.exit_code == 0
         assert "skipped 1" in result.output
         assert "Imported 1" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Milestone CLI tests
+# ---------------------------------------------------------------------------
+
+
+class TestMilestoneCreate:
+    def test_create(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main,
+            ["milestone", "create", "v1.0", "--description", "First release", "--due", "2026-06-01"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        assert "Created milestone 'v1.0'" in result.output
+        m = load_milestone(initialized_cli, "v1.0")
+        assert m.description == "First release"
+        assert m.due_date == "2026-06-01"
+
+    def test_create_minimal(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main, ["milestone", "create", "v2.0"], catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        m = load_milestone(initialized_cli, "v2.0")
+        assert m.status == "open"
+        assert m.description == ""
+
+    def test_create_duplicate(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "already exists" in result.output
+
+    def test_create_invalid_due_date(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main, ["milestone", "create", "v1.0", "--due", "not-a-date"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+        assert "Invalid due_date" in result.output
+
+
+class TestMilestoneList:
+    def test_list_empty(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["milestone", "list"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "No milestones found" in result.output
+
+    def test_list_with_milestones(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0", "--due", "2026-06-01"], catch_exceptions=False)
+        runner.invoke(main, ["milestone", "create", "v2.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "list"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "v1.0" in result.output
+        assert "v2.0" in result.output
+        assert "MILESTONE" in result.output
+
+    def test_list_filter_status(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["milestone", "create", "v2.0"], catch_exceptions=False)
+        runner.invoke(main, ["milestone", "close", "v2.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "list", "--status", "open"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "v1.0" in result.output
+        assert "v2.0" not in result.output
+
+    def test_list_json(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "list", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["name"] == "v1.0"
+
+    def test_list_shows_issue_counts(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Issue A", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Issue B", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["close", "2"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "list"], catch_exceptions=False)
+        assert result.exit_code == 0
+        # Should show 1 open, 1 closed, 50%
+        assert "1" in result.output
+        assert "50%" in result.output
+
+
+class TestMilestoneShow:
+    def test_show(self, runner: CliRunner, initialized_cli):
+        runner.invoke(
+            main,
+            ["milestone", "create", "v1.0", "--description", "Release", "--due", "2026-06-01"],
+            catch_exceptions=False,
+        )
+        runner.invoke(main, ["new", "Task A", "--milestone", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "show", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Milestone: v1.0" in result.output
+        assert "Release" in result.output
+        assert "2026-06-01" in result.output
+        assert "1 total" in result.output
+        assert "Task A" in result.output
+
+    def test_show_not_found(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["milestone", "show", "nope"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_show_json(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Task A", "--milestone", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "show", "v1.0", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "v1.0"
+        assert data["issues"]["total"] == 1
+        assert data["issues"]["open"] == 1
+
+    def test_show_no_issues(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "show", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "0 total" in result.output
+
+
+class TestMilestoneClose:
+    def test_close(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "close", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Closed milestone" in result.output
+        m = load_milestone(initialized_cli, "v1.0")
+        assert m.status == "closed"
+
+    def test_close_already_closed(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["milestone", "close", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "close", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "already closed" in result.output
+
+    def test_close_not_found(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["milestone", "close", "nope"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+
+class TestMilestoneReopen:
+    def test_reopen(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["milestone", "close", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "reopen", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Reopened milestone" in result.output
+        m = load_milestone(initialized_cli, "v1.0")
+        assert m.status == "open"
+
+    def test_reopen_already_open(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "reopen", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "already open" in result.output
+
+    def test_reopen_not_found(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["milestone", "reopen", "nope"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+
+class TestMilestoneEdit:
+    def test_edit_description(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0", "--description", "Old"], catch_exceptions=False)
+        result = runner.invoke(
+            main, ["milestone", "edit", "v1.0", "--description", "Updated"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        assert "Updated milestone" in result.output
+        m = load_milestone(initialized_cli, "v1.0")
+        assert m.description == "Updated"
+
+    def test_edit_due(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(
+            main, ["milestone", "edit", "v1.0", "--due", "2026-07-01"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        m = load_milestone(initialized_cli, "v1.0")
+        assert m.due_date == "2026-07-01"
+
+    def test_edit_nothing(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "edit", "v1.0"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "Nothing to edit" in result.output
+
+    def test_edit_not_found(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main, ["milestone", "edit", "nope", "--description", "x"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_edit_invalid_due(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(
+            main, ["milestone", "edit", "v1.0", "--due", "bad"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code != 0
+        assert "Invalid due_date" in result.output
+
+
+class TestMilestoneDelete:
+    def test_delete_no_refs(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "delete", "v1.0"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Deleted milestone" in result.output
+        assert list_milestones(initialized_cli) == []
+
+    def test_delete_with_refs_fails(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Task A", "--milestone", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "delete", "v1.0"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "Cannot delete" in result.output
+        assert "--force" in result.output
+
+    def test_delete_force(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Task A", "--milestone", "v1.0"], catch_exceptions=False)
+        result = runner.invoke(main, ["milestone", "delete", "v1.0", "--force"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Deleted milestone" in result.output
+        assert list_milestones(initialized_cli) == []
+        issue = load_issue(initialized_cli, 1)
+        assert issue.milestone is None
+
+    def test_delete_not_found(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["milestone", "delete", "nope"], catch_exceptions=False)
+        assert result.exit_code != 0
+        assert "not found" in result.output
