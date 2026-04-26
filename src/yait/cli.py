@@ -611,7 +611,7 @@ def export_cmd(fmt, outfile):
         text = json.dumps(data, indent=2, ensure_ascii=False)
     else:
         buf = io.StringIO()
-        fieldnames = ["id", "title", "status", "type", "priority", "labels", "assignee", "created_at", "updated_at", "body"]
+        fieldnames = ["id", "title", "status", "type", "priority", "labels", "assignee", "milestone", "created_at", "updated_at", "body"]
         writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for row in data:
@@ -662,6 +662,7 @@ def import_cmd(file):
             priority=item.get("priority", "none"),
             labels=item.get("labels") or [],
             assignee=item.get("assignee"),
+            milestone=item.get("milestone"),
             created_at=item.get("created_at", ""),
             updated_at=item.get("updated_at", ""),
             body=item.get("body", ""),
