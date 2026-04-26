@@ -82,37 +82,123 @@ def _highlight_text(text: str, query: str) -> str:
     return pattern.sub(lambda m: click.style(m.group(), bold=True, fg="yellow"), text)
 
 
-def _print_issue_table(issues: list[Issue], highlight: str | None = None, root: Path | None = None) -> None:
+def _detect_display_mode() -> str:
+    """Auto-detect display mode based on terminal width.
+
+    Returns 'compact' (<80), 'normal' (80-120), or 'wide' (>120).
+    Falls back to 'normal' when terminal size cannot be detected (e.g. pipe).
+    """
+    try:
+        cols = os.get_terminal_size().columns
+    except (OSError, ValueError):
+        return "normal"
+    if cols < 80:
+        return "compact"
+    elif cols > 120:
+        return "wide"
+    return "normal"
+
+
+def _truncate_title(title: str, max_width: int) -> str:
+    """Truncate title to max_width, appending '...' if needed."""
+    if len(title) <= max_width:
+        return title
+    return title[:max_width - 3] + "..."
+
+
+def _format_date(dt_str: str, fmt: str = "short") -> str:
+    """Format an ISO datetime string for display."""
+    if not dt_str:
+        return "\u2014"
+    if fmt == "short":
+        return dt_str[:10]
+    return dt_str[:19]
+
+
+def _print_issue_table(
+    issues: list[Issue],
+    highlight: str | None = None,
+    root: Path | None = None,
+    mode: str | None = None,
+) -> None:
     if not issues:
         click.echo('No issues found. Create one with: yait new "..."')
         return
     # Read display settings
     max_title_w = 50
+    date_fmt = "short"
     if root is not None:
         try:
             display = get_display(root)
             max_title_w = display.get("max_title_width", 50)
+            date_fmt = display.get("date_format", "short")
         except Exception:
             pass
+
+    # Determine display mode
+    if mode is None:
+        mode = _detect_display_mode()
+
     id_w = max(len(f"#{i.id}") for i in issues)
     st_w = max(len(i.status) for i in issues)
-    ty_w = max(len(i.type) for i in issues)
     ti_w = min(max(len(i.title) for i in issues), max_title_w)
-    header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TYPE':<{ty_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  ASSIGNEE"
-    click.echo(click.style(header, bold=True))
-    for i in issues:
-        labels = ",".join(i.labels) if i.labels else "\u2014"
-        assignee = i.assignee or "\u2014"
-        status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
-        type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
-        display_title = i.title
-        if len(display_title) > max_title_w:
-            display_title = display_title[:max_title_w - 1] + "\u2026"
-        title = _highlight_text(display_title, highlight) if highlight else display_title
-        # Pad after highlighting to keep columns aligned (ANSI codes don't take visual width)
-        pad = ti_w - len(display_title)
-        title_padded = title + " " * max(pad, 0)
-        click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  {title_padded}  {labels:<12}  {assignee}")
+
+    if mode == "compact":
+        header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  TITLE"
+        click.echo(click.style(header, bold=True))
+        for i in issues:
+            status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
+            display_title = _truncate_title(i.title, max_title_w)
+            title = _highlight_text(display_title, highlight) if highlight else display_title
+            click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {title}")
+
+    elif mode == "wide":
+        ty_w = max(len(i.type) for i in issues)
+        pr_w = max((len(i.priority) for i in issues), default=4)
+        ms_w = max((len(i.milestone or "\u2014") for i in issues), default=4)
+        as_w = max((len(i.assignee or "\u2014") for i in issues), default=8)
+        date_w = 10 if date_fmt == "short" else 19
+        header = (
+            f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TYPE':<{ty_w}}  "
+            f"{'PRIORITY':<{pr_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  "
+            f"{'MILESTONE':<{ms_w}}  {'ASSIGNEE':<{as_w}}  "
+            f"{'CREATED':<{date_w}}  UPDATED"
+        )
+        click.echo(click.style(header, bold=True))
+        for i in issues:
+            status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
+            type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
+            display_title = _truncate_title(i.title, max_title_w)
+            title = _highlight_text(display_title, highlight) if highlight else display_title
+            pad = ti_w - len(display_title)
+            title_padded = title + " " * max(pad, 0)
+            labels = ",".join(i.labels) if i.labels else "\u2014"
+            assignee = i.assignee or "\u2014"
+            priority = i.priority or "none"
+            ms = i.milestone or "\u2014"
+            created = _format_date(i.created_at, date_fmt)
+            updated = _format_date(i.updated_at, date_fmt)
+            click.echo(
+                f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  "
+                f"{priority:<{pr_w}}  {title_padded}  {labels:<12}  "
+                f"{ms:<{ms_w}}  {assignee:<{as_w}}  "
+                f"{created:<{date_w}}  {updated}"
+            )
+
+    else:  # normal
+        ty_w = max(len(i.type) for i in issues)
+        header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TYPE':<{ty_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  ASSIGNEE"
+        click.echo(click.style(header, bold=True))
+        for i in issues:
+            labels = ",".join(i.labels) if i.labels else "\u2014"
+            assignee = i.assignee or "\u2014"
+            status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
+            type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
+            display_title = _truncate_title(i.title, max_title_w)
+            title = _highlight_text(display_title, highlight) if highlight else display_title
+            pad = ti_w - len(display_title)
+            title_padded = title + " " * max(pad, 0)
+            click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  {title_padded}  {labels:<12}  {assignee}")
 
 
 def _load_or_exit(root: Path, issue_id: int) -> Issue:
@@ -340,7 +426,9 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
 @click.option("--has-doc", is_flag=True, default=False, help="Only issues with linked docs")
 @click.option("--no-doc", is_flag=True, default=False, help="Only issues without linked docs")
 @click.option("--doc", "doc_filter", default=None, help="Only issues linked to this doc slug/path")
-def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, has_doc, no_doc, doc_filter):
+@click.option("--compact", is_flag=True, default=False, help="Compact output (ID + Status + Title)")
+@click.option("--wide", is_flag=True, default=False, help="Wide output (all fields including dates)")
+def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, has_doc, no_doc, doc_filter, compact, wide):
     """List issues (default: open only).
 
     \b
@@ -373,7 +461,10 @@ def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, 
     if not issues:
         click.echo('No issues found. Create one with: yait new "..."')
         return
-    _print_issue_table(issues, root=root)
+    if compact and wide:
+        raise click.ClickException("Cannot use both --compact and --wide.")
+    display_mode = "compact" if compact else ("wide" if wide else None)
+    _print_issue_table(issues, root=root, mode=display_mode)
 
 
 # ── show ─────────────────────────────────────────────────────
@@ -986,8 +1077,10 @@ def template_delete(name):
 @click.option("--regex", "use_regex", is_flag=True, default=False, help="Treat query as regex pattern")
 @click.option("--title-only", is_flag=True, default=False, help="Search only in issue titles")
 @click.option("--count", is_flag=True, default=False, help="Show match count only")
+@click.option("--compact", is_flag=True, default=False, help="Compact output (ID + Status + Title)")
+@click.option("--wide", is_flag=True, default=False, help="Wide output (all fields including dates)")
 def search(query, status, type, as_json, label, priority, assignee, milestone,
-           use_regex, title_only, count):
+           use_regex, title_only, count, compact, wide):
     """Full-text search across issue titles and bodies.
 
     \b
@@ -1048,7 +1141,10 @@ def search(query, status, type, as_json, label, priority, assignee, milestone,
     if not matches:
         click.echo("No matching issues.")
         return
-    _print_issue_table(matches, highlight=query, root=root)
+    if compact and wide:
+        raise click.ClickException("Cannot use both --compact and --wide.")
+    display_mode = "compact" if compact else ("wide" if wide else None)
+    _print_issue_table(matches, highlight=query, root=root, mode=display_mode)
 
 
 # ── stats ───────────────────────────────────────────────────
