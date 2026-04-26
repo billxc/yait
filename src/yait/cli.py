@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,7 +37,15 @@ def _type_color(type: str) -> str:
     return {"bug": "red", "feature": "blue", "enhancement": "yellow"}.get(type, "white")
 
 
-def _print_issue_table(issues: list[Issue]) -> None:
+def _highlight_text(text: str, query: str) -> str:
+    """Highlight query matches in text with bold yellow ANSI (case-insensitive)."""
+    if not query or os.environ.get("NO_COLOR") is not None:
+        return text
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    return pattern.sub(lambda m: click.style(m.group(), bold=True, fg="yellow"), text)
+
+
+def _print_issue_table(issues: list[Issue], highlight: str | None = None) -> None:
     if not issues:
         click.echo('No issues found. Create one with: yait new "..."')
         return
@@ -50,7 +60,11 @@ def _print_issue_table(issues: list[Issue]) -> None:
         assignee = i.assignee or "\u2014"
         status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
         type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
-        click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
+        title = _highlight_text(i.title, highlight) if highlight else i.title
+        # Pad after highlighting to keep columns aligned (ANSI codes don't take visual width)
+        pad = ti_w - len(i.title)
+        title_padded = title + " " * max(pad, 0)
+        click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  {title_padded}  {labels:<12}  {assignee}")
 
 
 def _load_or_exit(root: Path, issue_id: int) -> Issue:
@@ -63,10 +77,22 @@ def _load_or_exit(root: Path, issue_id: int) -> Issue:
 
 # ── CLI Group ────────────────────────────────────────────────
 
-@click.group()
+@click.group(epilog="""\b
+Quick start:
+  yait init
+  yait new "Fix login bug" -t bug -l urgent
+  yait list
+  yait search "login"
+  yait show 1
+  yait close 1
+""")
 @click.version_option(version=__version__)
 def main():
-    """yait — Yet Another Issue Tracker"""
+    """yait — Yet Another Issue Tracker
+
+    A lightweight, git-backed issue tracker that lives in your repo.
+    Issues are stored as Markdown files and every change is auto-committed.
+    """
 
 
 # ── init ─────────────────────────────────────────────────────
@@ -93,7 +119,14 @@ def init():
 @click.option("--assign", "-a", default=None, help="Assignee")
 @click.option("--body", "-b", default="", help="Issue body text")
 def new(title, title_opt, type, label, assign, body):
-    """Create a new issue."""
+    """Create a new issue.
+
+    \b
+    Examples:
+      yait new "Fix login bug"
+      yait new "Add dark mode" -t feature -l ui
+      yait new "Crash on startup" -t bug -a alice -b "Repro: open app"
+    """
     resolved = title or title_opt
     if not resolved:
         click.echo("Error: title is required", err=True)
@@ -133,7 +166,15 @@ def new(title, title_opt, type, label, assign, body):
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.option("--sort", default="id", type=click.Choice(["id", "created", "updated"]), help="Sort order (default: id)")
 def list_cmd(status, type, priority, label, assignee, as_json, sort):
-    """List issues (default: open only)."""
+    """List issues (default: open only).
+
+    \b
+    Examples:
+      yait list
+      yait list --status all
+      yait list --type bug --label urgent
+      yait list --assignee alice --sort updated --json
+    """
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
@@ -159,7 +200,13 @@ def list_cmd(status, type, priority, label, assignee, as_json, sort):
 @click.argument("id", type=int)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 def show(id, as_json):
-    """Show issue details."""
+    """Show issue details.
+
+    \b
+    Examples:
+      yait show 1
+      yait show 1 --json
+    """
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
@@ -255,7 +302,14 @@ def comment(id, message):
 @click.option("--assign", "-a", "new_assign", default=None, help="New assignee")
 @click.option("--body", "-b", "new_body", default=None, help="New body")
 def edit(id, new_title, new_type, new_assign, new_body):
-    """Edit an issue inline or in $EDITOR."""
+    """Edit an issue inline or in $EDITOR.
+
+    \b
+    Examples:
+      yait edit 1 -T "New title"
+      yait edit 1 -t bug -a bob
+      yait edit 1                  # opens $EDITOR
+    """
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
@@ -342,7 +396,14 @@ def label_remove(id, name):
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 def search(query, status, type, as_json):
-    """Full-text search across issue titles and bodies."""
+    """Full-text search across issue titles and bodies.
+
+    \b
+    Examples:
+      yait search "login"
+      yait search "crash" --status all
+      yait search "api" --type bug --json
+    """
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
@@ -358,7 +419,7 @@ def search(query, status, type, as_json):
     if not matches:
         click.echo("No matching issues.")
         return
-    _print_issue_table(matches)
+    _print_issue_table(matches, highlight=query)
 
 
 # ── stats ───────────────────────────────────────────────────
