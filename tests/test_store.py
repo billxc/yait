@@ -5,6 +5,7 @@ from pathlib import Path
 
 from yait.models import Issue
 from yait.store import (
+    _read_config,
     init_store,
     is_initialized,
     list_issues,
@@ -323,3 +324,71 @@ f.close()
 
     assert nid == 11
     assert elapsed > 1.0, f"next_id returned too quickly ({elapsed:.2f}s), lock not effective"
+
+
+def test_save_and_load_issue_with_priority(initialized_root: Path):
+    """Round-trip preserves issue priority."""
+    issue = Issue(id=1, title="urgent bug", priority="p0")
+    save_issue(initialized_root, issue)
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.priority == "p0"
+
+
+def test_load_issue_missing_priority_defaults_to_none(initialized_root: Path):
+    """Loading an issue file without a priority field defaults to none."""
+    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file.write_text(
+        "---\n"
+        "id: 1\n"
+        "title: old issue\n"
+        "status: open\n"
+        "type: misc\n"
+        "labels: []\n"
+        "assignee: ''\n"
+        "created_at: ''\n"
+        "updated_at: ''\n"
+        "---\n"
+    )
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.priority == "none"
+
+
+def test_list_issues_filter_by_priority(initialized_root: Path):
+    """list_issues filters by priority."""
+    save_issue(initialized_root, Issue(id=1, title="A", priority="p0"))
+    save_issue(initialized_root, Issue(id=2, title="B", priority="p1"))
+    save_issue(initialized_root, Issue(id=3, title="C", priority="p0"))
+    save_issue(initialized_root, Issue(id=4, title="D", priority="p3"))
+    p0 = list_issues(initialized_root, priority="p0")
+    assert len(p0) == 2
+    assert {i.id for i in p0} == {1, 3}
+    p1 = list_issues(initialized_root, priority="p1")
+    assert len(p1) == 1
+    assert p1[0].id == 2
+
+
+def test_list_issues_skips_non_numeric_md(initialized_root: Path):
+    """list_issues ignores .md files with non-numeric names."""
+    save_issue(initialized_root, Issue(id=1, title="Real issue"))
+    # Create a non-numeric .md file in issues dir
+    bogus = initialized_root / ".yait" / "issues" / "README.md"
+    bogus.write_text("This is not an issue file")
+    issues = list_issues(initialized_root)
+    assert len(issues) == 1
+    assert issues[0].id == 1
+
+
+def test_read_config_corrupted(initialized_root: Path):
+    """_read_config raises ValueError on corrupted config."""
+    cfg = initialized_root / ".yait" / "config.yaml"
+    cfg.write_text("")
+    with pytest.raises(ValueError, match="corrupted or empty"):
+        _read_config(initialized_root)
+
+
+def test_save_issue_assignee_none_roundtrip(initialized_root: Path):
+    """Assignee=None roundtrips without becoming empty string."""
+    issue = Issue(id=1, title="no assignee", assignee=None)
+    save_issue(initialized_root, issue)
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.assignee is None

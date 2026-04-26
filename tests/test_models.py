@@ -1,4 +1,4 @@
-from yait.models import Issue, ISSUE_TYPES
+from yait.models import Issue, ISSUE_TYPES, PRIORITIES
 
 
 class TestIssueDataclass:
@@ -87,3 +87,19 @@ class TestIssueDataclass:
         assert issue.created_at == "2026-04-26T16:00:00+08:00"
         assert issue.updated_at == "2026-04-26T16:30:00+08:00"
         assert issue.body == "Some description"
+
+    def test_default_priority_is_none(self):
+        issue = Issue(id=1, title="test")
+        assert issue.priority == "none"
+
+    def test_create_with_priority(self):
+        issue = Issue(id=1, title="t", priority="p0")
+        assert issue.priority == "p0"
+
+    def test_priorities_constant(self):
+        assert len(PRIORITIES) == 5
+        assert "p0" in PRIORITIES
+        assert "p1" in PRIORITIES
+        assert "p2" in PRIORITIES
+        assert "p3" in PRIORITIES
+        assert "none" in PRIORITIES

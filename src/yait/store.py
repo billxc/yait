@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 from pathlib import Path
 
 import yaml
@@ -36,7 +39,10 @@ def is_initialized(root: Path) -> bool:
 
 
 def _read_config(root: Path) -> dict:
-    return yaml.safe_load(_config_path(root).read_text())
+    data = yaml.safe_load(_config_path(root).read_text())
+    if not isinstance(data, dict):
+        raise ValueError(".yait/config.yaml is corrupted or empty")
+    return data
 
 
 def _write_config(root: Path, cfg: dict) -> None:
@@ -46,7 +52,8 @@ def _write_config(root: Path, cfg: dict) -> None:
 def next_id(root: Path) -> int:
     cfg_path = _config_path(root)
     with open(cfg_path, 'r+') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(f, fcntl.LOCK_EX)
         cfg = yaml.safe_load(f.read())
         nid = cfg["next_id"]
         cfg["next_id"] = nid + 1
@@ -66,8 +73,9 @@ def save_issue(root: Path, issue: Issue) -> None:
         "title": issue.title,
         "status": issue.status,
         "type": issue.type,
+        "priority": issue.priority,
         "labels": issue.labels,
-        "assignee": issue.assignee or "",
+        "assignee": issue.assignee,
         "created_at": issue.created_at,
         "updated_at": issue.updated_at,
     }
@@ -93,6 +101,7 @@ def load_issue(root: Path, issue_id: int) -> Issue:
         title=fm["title"],
         status=fm["status"],
         type=fm.get("type", "misc"),
+        priority=fm.get("priority", "none"),
         labels=fm.get("labels") or [],
         assignee=fm.get("assignee") or None,
         created_at=fm.get("created_at", ""),
@@ -107,12 +116,15 @@ def list_issues(
     type: str | None = None,
     label: str | None = None,
     assignee: str | None = None,
+    priority: str | None = None,
 ) -> list[Issue]:
     issues_path = _issues_dir(root)
     if not issues_path.exists():
         return []
     issues = []
     for p in sorted(issues_path.glob("*.md")):
+        if not p.stem.isdigit():
+            continue
         issue = load_issue(root, int(p.stem))
         if status and issue.status != status:
             continue
@@ -121,6 +133,8 @@ def list_issues(
         if label and label not in issue.labels:
             continue
         if assignee and issue.assignee != assignee:
+            continue
+        if priority and issue.priority != priority:
             continue
         issues.append(issue)
     return issues
