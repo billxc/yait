@@ -21,6 +21,7 @@ class Issue:
     created_at: str = ""
     updated_at: str = ""
     body: str = ""
+    docs: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -32,6 +33,28 @@ class Issue:
             "labels": self.labels,
             "assignee": self.assignee,
             "milestone": self.milestone,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "body": self.body,
+            "docs": self.docs,
+        }
+
+
+_SLUG_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+@dataclass
+class Doc:
+    slug: str
+    title: str
+    created_at: str = ""
+    updated_at: str = ""
+    body: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "slug": self.slug,
+            "title": self.title,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "body": self.body,
