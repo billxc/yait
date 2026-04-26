@@ -5,26 +5,24 @@
 ```bash
 cd yet-another-issue-tracker
 
-# Run tests with uv (no venv needed)
-uv run --with pytest --with pyyaml --with click pytest tests/ -v
+# Install with test dependencies
+uv sync --group test
 
-# Or with pip in a venv
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[test]"
-pytest tests/ -v
+# Run tests
+uv run pytest tests/ -v
 ```
 
 ## Running Tests
 
 ```bash
 # Run all tests (49 total)
-uv run --with pytest --with pyyaml --with click pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run a specific test module
-uv run --with pytest --with pyyaml --with click pytest tests/test_models.py -v
+uv run pytest tests/test_models.py -v
 
 # Run with coverage
-uv run --with pytest --with pyyaml --with click --with pytest-cov pytest tests/ --cov=yait -v
+uv run pytest tests/ --cov=yait -v
 ```
 
 ## Feature Inventory

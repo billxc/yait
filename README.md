@@ -4,17 +4,13 @@ A local issue tracker built on markdown files and git. Every issue is a `.md` fi
 
 ## Install
 
-**Requirements:** Python 3.10+, git
+**Requirements:** Python 3.10+, git, [uv](https://docs.astral.sh/uv/)
 
 ```bash
-# With pip
-pip install -e .
-
-# With uv (no venv needed)
-uv pip install -e .
+uv sync
 ```
 
-After installation, the `yait` command is available in your shell.
+After installation, use `uv run yait` or activate the venv (`source .venv/bin/activate`) to use `yait` directly.
 
 ## Quick Start
 
@@ -281,13 +277,10 @@ git clone https://github.com/user/yet-another-issue-tracker.git
 cd yet-another-issue-tracker
 
 # Install with test dependencies
-pip install -e ".[test]"
+uv sync --group test
 
 # Run tests
-pytest tests/ -v
-
-# Or without a venv, using uv
-uv run --with pytest --with pyyaml --with click pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ### Project layout

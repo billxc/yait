@@ -15,5 +15,8 @@ yait = "yait.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/yait"]
 
+[dependency-groups]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

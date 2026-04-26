@@ -15,7 +15,7 @@ yait is a local issue tracker built on markdown files and git. Each issue is a m
 - Zero external service dependencies, fully local
 - Issue data is plain text, human-readable, git-friendly
 - Simple CLI that integrates naturally with git workflow
-- Install with `pip install .`
+- Install with `uv sync`
 
 ## Non-goals
 
@@ -179,7 +179,7 @@ yait search <query> [--type bug] [--status open]
 
 - **Language**: Python 3.10+
 - **Dependencies**: PyYAML (frontmatter), click (CLI)
-- **Packaging**: pyproject.toml with hatchling, `pip install .`
+- **Packaging**: pyproject.toml with hatchling, `uv sync`
 - **Git ops**: `subprocess.run(["git", ...])` for git commands
 - **Frontmatter**: Manual `---` delimiter parsing
 
