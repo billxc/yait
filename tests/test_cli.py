@@ -393,7 +393,7 @@ class TestVersion:
     def test_version_flag(self, runner: CliRunner):
         result = runner.invoke(main, ["--version"], catch_exceptions=False)
         assert result.exit_code == 0
-        assert "0.3.0" in result.output
+        assert "0.3.1" in result.output
 
 
 class TestShowCommentCount:
