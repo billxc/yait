@@ -315,3 +315,117 @@ class TestListSort:
         assert len(data) == 2
         assert data[0]["title"] == "First"
         assert data[1]["title"] == "Second"
+
+
+class TestPositionalTitle:
+    def test_new_positional_title(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["new", "Fix bug"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "#1" in result.output
+        issue = load_issue(initialized_cli, 1)
+        assert issue.title == "Fix bug"
+
+    def test_new_option_title_compat(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["new", "--title", "Option title"], catch_exceptions=False)
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.title == "Option title"
+
+    def test_new_no_title_fails(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["new"])
+        assert result.exit_code != 0
+
+
+class TestAssignUnassign:
+    def test_assign(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Test"], catch_exceptions=False)
+        result = runner.invoke(main, ["assign", "1", "alice"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Assigned" in result.output
+        issue = load_issue(initialized_cli, 1)
+        assert issue.assignee == "alice"
+
+    def test_unassign(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Test", "-a", "alice"], catch_exceptions=False)
+        result = runner.invoke(main, ["unassign", "1"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Unassigned" in result.output
+        issue = load_issue(initialized_cli, 1)
+        assert issue.assignee is None
+
+
+class TestInlineEdit:
+    def test_edit_inline_title(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Old title"], catch_exceptions=False)
+        result = runner.invoke(main, ["edit", "1", "-T", "New title"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Updated" in result.output
+        issue = load_issue(initialized_cli, 1)
+        assert issue.title == "New title"
+
+    def test_edit_inline_type(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Test"], catch_exceptions=False)
+        result = runner.invoke(main, ["edit", "1", "-t", "bug"], catch_exceptions=False)
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.type == "bug"
+
+
+class TestSearchDefaultOpen:
+    def test_search_defaults_to_open(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Open issue"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Closed issue"], catch_exceptions=False)
+        runner.invoke(main, ["close", "2"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "issue"], catch_exceptions=False)
+        assert "Open issue" in result.output
+        assert "Closed issue" not in result.output
+
+    def test_search_all_status(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Open issue"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "Closed issue"], catch_exceptions=False)
+        runner.invoke(main, ["close", "2"], catch_exceptions=False)
+        result = runner.invoke(main, ["search", "issue", "--status", "all"], catch_exceptions=False)
+        assert "Open issue" in result.output
+        assert "Closed issue" in result.output
+
+
+class TestVersion:
+    def test_version_flag(self, runner: CliRunner):
+        result = runner.invoke(main, ["--version"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "0.3.0" in result.output
+
+
+class TestShowCommentCount:
+    def test_show_comment_count(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Commentable"], catch_exceptions=False)
+        runner.invoke(main, ["comment", "1", "-m", "First note"], catch_exceptions=False)
+        runner.invoke(main, ["comment", "1", "-m", "Second note"], catch_exceptions=False)
+        result = runner.invoke(main, ["show", "1"], catch_exceptions=False)
+        assert "Comments: 2" in result.output
+
+    def test_show_zero_comments(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "No comments"], catch_exceptions=False)
+        result = runner.invoke(main, ["show", "1"], catch_exceptions=False)
+        assert "Comments: 0" in result.output
+
+
+class TestEmptyStateGuidance:
+    def test_list_empty_shows_guidance(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["list"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "yait new" in result.output
+
+
+class TestLog:
+    def test_log_command(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Log test"], catch_exceptions=False)
+        result = runner.invoke(main, ["log", "1"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(result.output.strip()) > 0
+
+    def test_log_all(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "First"], catch_exceptions=False)
+        result = runner.invoke(main, ["log"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(result.output.strip()) > 0

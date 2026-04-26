@@ -7,7 +7,8 @@ from pathlib import Path
 
 import click
 
-from .git_ops import git_commit, is_git_repo
+from . import __version__
+from .git_ops import git_commit, git_log, is_git_repo
 from .models import ISSUE_TYPES, PRIORITIES, Issue
 from .store import init_store, is_initialized, list_issues, load_issue, next_id, save_issue
 
@@ -36,9 +37,9 @@ def _type_color(type: str) -> str:
 
 def _print_issue_table(issues: list[Issue]) -> None:
     if not issues:
-        click.echo("No issues found.")
+        click.echo('No issues found. Create one with: yait new "..."')
         return
-    id_w = max(len(str(i.id)) for i in issues)
+    id_w = max(len(f"#{i.id}") for i in issues)
     st_w = max(len(i.status) for i in issues)
     ty_w = max(len(i.type) for i in issues)
     ti_w = max(len(i.title) for i in issues)
@@ -49,7 +50,7 @@ def _print_issue_table(issues: list[Issue]) -> None:
         assignee = i.assignee or "\u2014"
         status_str = click.style(f"{i.status:<{st_w}}", fg=_status_color(i.status))
         type_str = click.style(f"{i.type:<{ty_w}}", fg=_type_color(i.type))
-        click.echo(f"#{i.id:<{id_w}}  {status_str}  {type_str}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
+        click.echo(f"{'#' + str(i.id):<{id_w}}  {status_str}  {type_str}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
 
 
 def _load_or_exit(root: Path, issue_id: int) -> Issue:
@@ -63,6 +64,7 @@ def _load_or_exit(root: Path, issue_id: int) -> Issue:
 # ── CLI Group ────────────────────────────────────────────────
 
 @click.group()
+@click.version_option(version=__version__)
 def main():
     """yait — Yet Another Issue Tracker"""
 
@@ -84,20 +86,25 @@ def init():
 # ── new ──────────────────────────────────────────────────────
 
 @main.command()
-@click.option("--title", required=True, help="Issue title")
+@click.argument("title", required=False, default=None)
+@click.option("--title", "title_opt", default=None, help="Issue title")
 @click.option("--type", "-t", default="misc", type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")
 @click.option("--assign", "-a", default=None, help="Assignee")
 @click.option("--body", "-b", default="", help="Issue body text")
-def new(title, type, label, assign, body):
+def new(title, title_opt, type, label, assign, body):
     """Create a new issue."""
+    resolved = title or title_opt
+    if not resolved:
+        click.echo("Error: title is required", err=True)
+        raise SystemExit(1)
     root = _root()
     _require_init(root)
     now = _now()
     nid = next_id(root)
     issue = Issue(
         id=nid,
-        title=title,
+        title=resolved,
         status="open",
         type=type,
         labels=list(label),
@@ -107,8 +114,8 @@ def new(title, type, label, assign, body):
         body=body,
     )
     save_issue(root, issue)
-    click.echo(f"Created issue #{nid}: {title}")
-    git_commit(root, f"yait: create issue #{nid} \u2014 {title}")
+    click.echo(f"Created issue #{nid}: {resolved}")
+    git_commit(root, f"yait: create issue #{nid} \u2014 {resolved}")
 
 
 # ── list ─────────────────────────────────────────────────────
@@ -141,7 +148,7 @@ def list_cmd(status, type, priority, label, assignee, as_json, sort):
         click.echo(json.dumps([i.to_dict() for i in issues], indent=2))
         return
     if not issues:
-        click.echo("No issues found.")
+        click.echo('No issues found. Create one with: yait new "..."')
         return
     _print_issue_table(issues)
 
@@ -159,6 +166,7 @@ def show(id, as_json):
     if as_json:
         click.echo(json.dumps(issue.to_dict(), indent=2))
         return
+    comment_count = issue.body.count("**Comment**") if issue.body else 0
     status_str = click.style(issue.status, fg=_status_color(issue.status))
     click.echo(f"#{issue.id}  [{status_str}]  {issue.title}")
     click.echo(f"Type: {click.style(issue.type, fg=_type_color(issue.type))}")
@@ -168,6 +176,7 @@ def show(id, as_json):
         click.echo(f"Assignee: {issue.assignee}")
     click.echo(f"Created: {issue.created_at}")
     click.echo(f"Updated: {issue.updated_at}")
+    click.echo(f"Comments: {comment_count}")
     if issue.body:
         click.echo(f"\n{issue.body}")
 
@@ -216,12 +225,18 @@ def reopen(ids):
 
 @main.command()
 @click.argument("id", type=int)
-@click.option("--message", "-m", required=True, help="Comment text")
+@click.option("--message", "-m", default=None, help="Comment text")
 def comment(id, message):
     """Add a comment to an issue."""
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
+    if message is None:
+        message = click.edit()
+        if not message or not message.strip():
+            click.echo("Aborted: empty comment.")
+            return
+        message = message.strip()
     now = _now()
     separator = "\n\n---\n" if issue.body else ""
     issue.body += f"{separator}**Comment** ({now}):\n{message}"
@@ -235,23 +250,37 @@ def comment(id, message):
 
 @main.command()
 @click.argument("id", type=int)
-def edit(id):
-    """Edit an issue in $EDITOR."""
+@click.option("--title", "-T", "new_title", default=None, help="New title")
+@click.option("--type", "-t", "new_type", default=None, type=click.Choice(ISSUE_TYPES), help="New type")
+@click.option("--assign", "-a", "new_assign", default=None, help="New assignee")
+@click.option("--body", "-b", "new_body", default=None, help="New body")
+def edit(id, new_title, new_type, new_assign, new_body):
+    """Edit an issue inline or in $EDITOR."""
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
-    template = f"title: {issue.title}\n\n{issue.body}"
-    result = click.edit(template)
-    if result is None:
-        click.echo("Edit cancelled.")
-        return
-    lines = result.split("\n", 1)
-    first_line = lines[0].strip()
-    if first_line.lower().startswith("title:"):
-        issue.title = first_line[len("title:"):].strip()
+    if any(v is not None for v in (new_title, new_type, new_assign, new_body)):
+        if new_title is not None:
+            issue.title = new_title
+        if new_type is not None:
+            issue.type = new_type
+        if new_assign is not None:
+            issue.assignee = new_assign or None
+        if new_body is not None:
+            issue.body = new_body
     else:
-        issue.title = first_line
-    issue.body = lines[1].strip() if len(lines) > 1 else ""
+        template = f"title: {issue.title}\n\n{issue.body}"
+        result = click.edit(template)
+        if result is None:
+            click.echo("Edit cancelled.")
+            return
+        lines = result.split("\n", 1)
+        first_line = lines[0].strip()
+        if first_line.lower().startswith("title:"):
+            issue.title = first_line[len("title:"):].strip()
+        else:
+            issue.title = first_line
+        issue.body = lines[1].strip() if len(lines) > 1 else ""
     issue.updated_at = _now()
     save_issue(root, issue)
     click.echo(f"Updated issue #{id}: {issue.title}")
@@ -306,9 +335,9 @@ def label_remove(id, name):
 @main.command()
 @click.argument("query")
 @click.option(
-    "--status", default="all",
+    "--status", default="open",
     type=click.Choice(["open", "closed", "all"]),
-    help="Filter by status",
+    help="Filter by status (default: open)",
 )
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
@@ -359,3 +388,54 @@ def stats():
     if label_counts:
         label_str = ", ".join(f"{l}={c}" for l, c in label_counts.most_common())
         click.echo(f"By label: {label_str}")
+
+
+# ── assign / unassign ──────────────────────────────────────
+
+@main.command()
+@click.argument("id", type=int)
+@click.argument("name")
+def assign(id, name):
+    """Assign an issue to someone."""
+    root = _root()
+    _require_init(root)
+    issue = _load_or_exit(root, id)
+    issue.assignee = name
+    issue.updated_at = _now()
+    save_issue(root, issue)
+    click.echo(f"Assigned issue #{id} to {name}")
+    git_commit(root, f"yait: assign #{id} to {name}")
+
+
+@main.command()
+@click.argument("id", type=int)
+def unassign(id):
+    """Remove assignee from an issue."""
+    root = _root()
+    _require_init(root)
+    issue = _load_or_exit(root, id)
+    issue.assignee = None
+    issue.updated_at = _now()
+    save_issue(root, issue)
+    click.echo(f"Unassigned issue #{id}")
+    git_commit(root, f"yait: unassign #{id}")
+
+
+# ── log ─────────────────────────────────────────────────────
+
+@main.command()
+@click.argument("id", type=int, required=False, default=None)
+@click.option("--limit", "-n", default=10, help="Max entries")
+def log(id, limit):
+    """Show issue change history from git log."""
+    root = _root()
+    _require_init(root)
+    if id is not None:
+        path = f".yait/issues/{id}.md"
+    else:
+        path = ".yait/"
+    output = git_log(root, path, limit)
+    if output:
+        click.echo(output)
+    else:
+        click.echo("No history found.")

@@ -26,6 +26,15 @@ def git_add(root: Path, *paths: str) -> None:
     git_run(root, "add", *paths)
 
 
+def git_log(root: Path, path: str, limit: int = 10) -> str:
+    """Return git log --oneline --follow for the given path."""
+    try:
+        result = git_run(root, "log", "--oneline", "--follow", f"-{limit}", "--", path)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
 def git_commit(root: Path, message: str) -> None:
     """Stage .yait/ and commit. No-op if not a git repo or nothing changed."""
     if not is_git_repo(root):
