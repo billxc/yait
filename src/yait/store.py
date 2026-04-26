@@ -59,6 +59,7 @@ def save_issue(root: Path, issue: Issue) -> None:
         "id": issue.id,
         "title": issue.title,
         "status": issue.status,
+        "type": issue.type,
         "labels": issue.labels,
         "assignee": issue.assignee or "",
         "created_at": issue.created_at,
@@ -83,6 +84,7 @@ def load_issue(root: Path, issue_id: int) -> Issue:
         id=fm["id"],
         title=fm["title"],
         status=fm["status"],
+        type=fm.get("type", "misc"),
         labels=fm.get("labels") or [],
         assignee=fm.get("assignee") or None,
         created_at=fm.get("created_at", ""),
@@ -94,6 +96,7 @@ def load_issue(root: Path, issue_id: int) -> Issue:
 def list_issues(
     root: Path,
     status: str | None = None,
+    type: str | None = None,
     label: str | None = None,
     assignee: str | None = None,
 ) -> list[Issue]:
@@ -104,6 +107,8 @@ def list_issues(
     for p in sorted(issues_path.glob("*.md")):
         issue = load_issue(root, int(p.stem))
         if status and issue.status != status:
+            continue
+        if type and issue.type != type:
             continue
         if label and label not in issue.labels:
             continue

@@ -205,3 +205,55 @@ def test_roundtrip_yaml_frontmatter(initialized_root: Path):
 def test_list_issues_uninitialised_dir(tmp_path: Path):
     """list_issues on a dir without .yait returns empty list."""
     assert list_issues(tmp_path) == []
+
+
+def test_save_and_load_issue_with_type(initialized_root: Path):
+    """Round-trip preserves issue type."""
+    issue = Issue(id=1, title="bug report", type="bug")
+    save_issue(initialized_root, issue)
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.type == "bug"
+
+
+def test_load_issue_missing_type_defaults_to_misc(initialized_root: Path):
+    """Loading an issue file without a type field defaults to misc."""
+    # Manually write an issue file without the type field
+    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file.write_text(
+        "---\n"
+        "id: 1\n"
+        "title: old issue\n"
+        "status: open\n"
+        "labels: []\n"
+        "assignee: ''\n"
+        "created_at: ''\n"
+        "updated_at: ''\n"
+        "---\n"
+    )
+    loaded = load_issue(initialized_root, 1)
+    assert loaded.type == "misc"
+
+
+def test_list_issues_filter_by_type(initialized_root: Path):
+    """list_issues filters by type."""
+    save_issue(initialized_root, Issue(id=1, title="A", type="bug"))
+    save_issue(initialized_root, Issue(id=2, title="B", type="feature"))
+    save_issue(initialized_root, Issue(id=3, title="C", type="bug"))
+    save_issue(initialized_root, Issue(id=4, title="D", type="misc"))
+    bugs = list_issues(initialized_root, type="bug")
+    assert len(bugs) == 2
+    assert {b.id for b in bugs} == {1, 3}
+    features = list_issues(initialized_root, type="feature")
+    assert len(features) == 1
+    assert features[0].id == 2
+
+
+def test_save_issue_type_in_frontmatter(initialized_root: Path):
+    """Saved issue file has type in YAML frontmatter."""
+    issue = Issue(id=1, title="typed", type="enhancement")
+    save_issue(initialized_root, issue)
+    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    content = issue_file.read_text()
+    parts = content.split("---\n", 2)
+    fm = yaml.safe_load(parts[1])
+    assert fm["type"] == "enhancement"
