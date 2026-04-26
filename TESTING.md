@@ -3,7 +3,6 @@
 ## Environment Setup
 
 ```bash
-# Clone and enter the repo
 cd yet-another-issue-tracker
 
 # Run tests with uv (no venv needed)
@@ -18,7 +17,7 @@ pytest tests/ -v
 ## Running Tests
 
 ```bash
-# Run all tests (~60 total)
+# Run all tests (49 total)
 uv run --with pytest --with pyyaml --with click pytest tests/ -v
 
 # Run a specific test module
@@ -32,28 +31,50 @@ uv run --with pytest --with pyyaml --with click --with pytest-cov pytest tests/ 
 
 | Feature | Module | Test File | Tests | Status |
 |---|---|---|---|---|
-| Issue dataclass | `models.py` | `test_models.py` | 8 | Pass |
-| Issue type field | `models.py` | `test_models.py` | ~4 | Pass |
-| Store init | `store.py` | `test_store.py` | 2 | Pass |
-| Save/load issue | `store.py` | `test_store.py` | 2 | Pass |
-| Save/load with type | `store.py` | `test_store.py` | ~2 | Pass |
-| List/filter issues | `store.py` | `test_store.py` | 2 | Pass |
-| Filter by type | `store.py` | `test_store.py` | ~2 | Pass |
-| ID auto-increment | `store.py` | `test_store.py` | 1 | Pass |
+| Issue dataclass defaults | `models.py` | `test_models.py` | 6 | Pass |
+| Issue dataclass mutation | `models.py` | `test_models.py` | 2 | Pass |
+| Issue create with all fields | `models.py` | `test_models.py` | 1 | Pass |
+| Labels not shared between instances | `models.py` | `test_models.py` | 1 | Pass |
+| Store init + idempotent | `store.py` | `test_store.py` | 3 | Pass |
+| Save/load issue roundtrip | `store.py` | `test_store.py` | 3 | Pass |
+| ID auto-increment | `store.py` | `test_store.py` | 2 | Pass |
+| List issues (all / empty) | `store.py` | `test_store.py` | 2 | Pass |
+| List filter by status | `store.py` | `test_store.py` | 1 | Pass |
+| List filter by label | `store.py` | `test_store.py` | 1 | Pass |
+| List filter by assignee | `store.py` | `test_store.py` | 1 | Pass |
+| List combined filters | `store.py` | `test_store.py` | 1 | Pass |
+| Load non-existent issue | `store.py` | `test_store.py` | 1 | Pass |
+| Issue with comments (body roundtrip) | `store.py` | `test_store.py` | 1 | Pass |
+| YAML special chars roundtrip | `store.py` | `test_store.py` | 1 | Pass |
+| List on uninitialised dir | `store.py` | `test_store.py` | 1 | Pass |
 | Git repo detection | `git_ops.py` | `test_git_ops.py` | 2 | Pass |
-| Git commit | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
+| git_add + git_commit | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
+| git_run returns CompletedProcess | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
+| git_commit no-op without staged | `git_ops.py` | `test_git_ops.py` | 1 | Pass |
 | CLI: init | `cli.py` | `test_cli.py` | 1 | Pass |
-| CLI: new | `cli.py` | `test_cli.py` | 2 | Pass |
-| CLI: new --type | `cli.py` | `test_cli.py` | ~3 | Pass |
-| CLI: list | `cli.py` | `test_cli.py` | 1 | Pass |
-| CLI: list --type | `cli.py` | `test_cli.py` | ~2 | Pass |
-| CLI: show | `cli.py` | `test_cli.py` | 1 | Pass |
-| CLI: close | `cli.py` | `test_cli.py` | ~2 | Pass |
-| CLI: reopen | `cli.py` | `test_cli.py` | ~2 | Pass |
-| CLI: comment | `cli.py` | `test_cli.py` | ~2 | Pass |
-| CLI: label add/remove | `cli.py` | `test_cli.py` | ~2 | Pass |
-| CLI: search | `cli.py` | `test_cli.py` | ~2 | Pass |
-| CLI: search --type | `cli.py` | `test_cli.py` | ~2 | Pass |
+| CLI: new (basic + options + fail) | `cli.py` | `test_cli.py` | 3 | Pass |
+| CLI: list (show + empty + filter) | `cli.py` | `test_cli.py` | 3 | Pass |
+| CLI: show (details + not found) | `cli.py` | `test_cli.py` | 2 | Pass |
+| CLI: close + reopen | `cli.py` | `test_cli.py` | 1 | Pass |
+| CLI: comment | `cli.py` | `test_cli.py` | 1 | Pass |
+| CLI: label add/remove/duplicate | `cli.py` | `test_cli.py` | 3 | Pass |
+| CLI: search (match + no match) | `cli.py` | `test_cli.py` | 2 | Pass |
+
+**Total: 49 tests across 4 modules**
+
+## Test Categories
+
+- **test_models.py** (10 tests) — Pure unit tests for Issue dataclass, no I/O.
+- **test_store.py** (18 tests) — Filesystem integration tests using `tmp_path` and `initialized_root` fixtures.
+- **test_git_ops.py** (5 tests) — Git integration tests with real git repos in temp directories.
+- **test_cli.py** (16 tests) — CLI end-to-end tests via Click's `CliRunner` with monkeypatched `cwd`.
+
+## Shared Fixtures (`conftest.py`)
+
+| Fixture | Description |
+|---------|-------------|
+| `yait_root` | Temp directory with `git init` + user config |
+| `initialized_root` | `yait_root` with `init_store()` already called |
 
 ## Manual Test Steps
 
@@ -66,113 +87,56 @@ yait init
 # Expected: .yait/ directory created, initial git commit
 ```
 
-### 2. Create an issue
+### 2. Create issues
 
 ```bash
-yait new --title "First bug"
+yait new --title "First bug" --type bug
 # Expected: prints "Created issue #1: First bug"
-```
-
-### 3. Create an issue with --type
-
-```bash
-yait new --title "Login crash" --type bug
-# Expected: prints "Created issue #2: Login crash"
 
 yait new --title "Add search" --type feature
-# Expected: prints "Created issue #3: Add search"
+# Expected: prints "Created issue #2: Add search"
 
 yait new --title "Generic task"
-# Expected: prints "Created issue #4: Generic task" (type defaults to misc)
+# Expected: prints "Created issue #3: Generic task" (type defaults to misc)
 ```
 
-### 4. Verify type in issue file
+### 3. List and filter
 
 ```bash
-cat .yait/issues/2.md
-# Expected: frontmatter contains "type: bug"
-
-cat .yait/issues/4.md
-# Expected: frontmatter contains "type: misc"
+yait list                    # all open issues
+yait list --status closed    # closed only
+yait list --type bug         # open bugs
+yait list --label urgent     # by label
 ```
 
-### 5. List issues
+### 4. Show, close, reopen
 
 ```bash
-yait list
-# Expected: shows all 4 open issues
-```
-
-### 6. Filter by type
-
-```bash
-yait list --type bug
-# Expected: shows only issue #2 (Login crash)
-
-yait list --type feature
-# Expected: shows only issue #3 (Add search)
-
-yait list --type misc
-# Expected: shows issues #1 and #4
-```
-
-### 7. Show issue details
-
-```bash
-yait show 2
-# Expected: full issue with type=bug, status, created/updated timestamps
-```
-
-### 8. Verify issue file on disk
-
-```bash
-cat .yait/issues/1.md
-# Expected: YAML frontmatter with title, status, type, labels, etc.
-```
-
-### 9. Filter by status
-
-```bash
-yait list --status open
-yait list --status closed
-```
-
-### 10. Close and reopen
-
-```bash
+yait show 1
 yait close 1
 yait show 1   # status should be "closed"
 yait reopen 1
 yait show 1   # status should be "open"
 ```
 
-### 11. Search with --type filter
+### 5. Comment and search
 
 ```bash
-yait search "crash" --type bug
-# Expected: shows only issue #2
-
-yait search "crash" --type feature
-# Expected: no matching issues
+yait comment 1 -m "Fixed in abc123"
+yait search "bug"
 ```
 
-### 12. Invalid type value
+### 6. Label management
 
 ```bash
-yait new --title "bad" --type invalid
-# Expected: error — invalid choice "invalid"
+yait label add 1 urgent
+yait label remove 1 urgent
 ```
-
-## Test Categories
-
-- **test_models.py** (~12 tests) — Pure unit tests, no I/O. Covers Issue dataclass including type field.
-- **test_store.py** (~12 tests) — Filesystem integration tests using tmp_path fixtures. Covers save/load/list with type.
-- **test_git_ops.py** (3 tests) — Git integration tests with real git repos.
-- **test_cli.py** (~15 tests) — CLI end-to-end tests via CliRunner. Covers all commands including --type.
 
 ## Known Limitations
 
 - No concurrency or locking tests — yait is single-user by design.
 - No Windows-specific path tests.
-- No negative tests for `load_issue` with non-existent ID (FileNotFoundError path).
-- No test for malformed issue files.
+- No test for malformed issue files (corrupt YAML, missing fields).
+- `yait edit` is not tested (requires interactive `$EDITOR`).
+- `--type` filter is not yet tested (v0.2 feature).

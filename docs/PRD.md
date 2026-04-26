@@ -221,7 +221,7 @@ yet-another-issue-tracker/
 - `yait label add/remove`
 - `yait search`
 - Git auto-commit on all write operations
-- Basic test suite (23 tests)
+- Test suite (49 tests)
 
 ### M2: Issue Types (v0.2) — In Progress
 
