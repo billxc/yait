@@ -431,7 +431,10 @@ def log(id, limit):
     root = _root()
     _require_init(root)
     if id is not None:
-        path = f".yait/issues/{id}.md"
+        sid = str(id)
+        if not sid.isdigit():
+            raise click.BadParameter(f"Invalid issue ID: {id!r}")
+        path = f".yait/issues/{sid}.md"
     else:
         path = ".yait/"
     output = git_log(root, path, limit)
