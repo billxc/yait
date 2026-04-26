@@ -69,7 +69,7 @@ def _print_issue_table(issues: list[Issue], highlight: str | None = None) -> Non
 def _load_or_exit(root: Path, issue_id: int) -> Issue:
     try:
         return load_issue(root, issue_id)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         raise click.ClickException(f"Issue #{issue_id} not found.")
 
 
@@ -126,8 +126,8 @@ def new(title, title_opt, type, label, assign, body):
       yait new "Crash on startup" -t bug -a alice -b "Repro: open app"
     """
     resolved = title or title_opt
-    if not resolved:
-        raise click.ClickException("title is required")
+    if not resolved or not resolved.strip():
+        raise click.ClickException("Title cannot be empty or whitespace only")
     root = _root()
     _require_init(root)
     now = _now()
