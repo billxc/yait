@@ -303,6 +303,100 @@ class TestStats:
         assert "feature=1" in result.output
         assert "urgent=2" in result.output
         assert "backend=1" in result.output
+        # Enhanced: priority and assignee/milestone dimensions
+        assert "By priority:" in result.output
+        assert "By milestone:" in result.output
+        assert "By assignee:" in result.output
+
+    def test_stats_with_priority_milestone_assignee(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A", "--type", "bug", "--priority", "p0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "B", "--type", "feature", "--priority", "p1", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "C", "--type", "bug", "--priority", "p0", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["assign", "1", "alice"], catch_exceptions=False)
+        runner.invoke(main, ["assign", "2", "alice"], catch_exceptions=False)
+        runner.invoke(main, ["assign", "3", "bob"], catch_exceptions=False)
+        runner.invoke(main, ["close", "2"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "3 total" in result.output
+        assert "p0=2" in result.output
+        assert "p1=1" in result.output
+        assert "v1.0" in result.output
+        assert "alice" in result.output
+        assert "bob" in result.output
+
+    def test_stats_json(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A", "--type", "bug", "--priority", "p0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "B", "--type", "feature", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["close", "1"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["total"] == 2
+        assert data["open"] == 1
+        assert data["closed"] == 1
+        assert "bug" in data["by_type"]
+        assert "p0" in data["by_priority"]
+        assert "v1.0" in data["by_milestone"]
+        assert "(none)" in data["by_assignee"]
+
+    def test_stats_json_empty(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["stats", "--json"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["total"] == 0
+
+    def test_stats_by_milestone(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "B", "--milestone", "v1.0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "C"], catch_exceptions=False)
+        runner.invoke(main, ["close", "2"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats", "--by", "milestone"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "v1.0" in result.output
+        assert "(none)" in result.output
+        assert "50%" in result.output
+
+    def test_stats_by_assignee(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A"], catch_exceptions=False)
+        runner.invoke(main, ["assign", "1", "alice"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "B"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats", "--by", "assignee"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "alice" in result.output
+        assert "(none)" in result.output
+
+    def test_stats_by_priority(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A", "--priority", "p0"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "B", "--priority", "p1"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "C", "--priority", "p1"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats", "--by", "priority"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "p0=1" in result.output
+        assert "p1=2" in result.output
+
+    def test_stats_by_type(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A", "--type", "bug"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "B", "--type", "feature"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats", "--by", "type"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "bug=1" in result.output
+        assert "feature=1" in result.output
+
+    def test_stats_by_json_dimension(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A", "--priority", "p0"], catch_exceptions=False)
+
+        result = runner.invoke(main, ["stats", "--json", "--by", "priority"], catch_exceptions=False)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "by_priority" in data
+        assert data["by_priority"]["p0"] == 1
 
 
 class TestListSort:

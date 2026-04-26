@@ -741,31 +741,127 @@ def search(query, status, type, as_json):
 
 # ── stats ───────────────────────────────────────────────────
 
+
+def _group_by_field(issues, field: str) -> dict[str, list]:
+    """Group issues by a field value. None values become '(none)'."""
+    groups: dict[str, list] = {}
+    for i in issues:
+        val = getattr(i, field) or "(none)"
+        groups.setdefault(val, []).append(i)
+    return groups
+
+
+def _open_closed(issues) -> tuple[int, int]:
+    o = sum(1 for i in issues if i.status == "open")
+    c = sum(1 for i in issues if i.status == "closed")
+    return o, c
+
+
+def _build_stats_data(all_issues) -> dict:
+    """Build the full stats data structure."""
+    total = len(all_issues)
+    open_count = sum(1 for i in all_issues if i.status == "open")
+    closed_count = total - open_count
+
+    type_counts = Counter(i.type for i in all_issues)
+    priority_counts = Counter(i.priority for i in all_issues)
+
+    label_counts: Counter[str] = Counter()
+    for i in all_issues:
+        for lbl in i.labels:
+            label_counts[lbl] += 1
+
+    milestone_groups = _group_by_field(all_issues, "milestone")
+    milestone_data = {}
+    for name, issues in sorted(milestone_groups.items(), key=lambda x: (x[0] == "(none)", x[0])):
+        o, c = _open_closed(issues)
+        pct = round(c / (o + c) * 100) if (o + c) else 0
+        milestone_data[name] = {"open": o, "closed": c, "percent": pct}
+
+    assignee_groups = _group_by_field(all_issues, "assignee")
+    assignee_data = {}
+    for name, issues in sorted(assignee_groups.items(), key=lambda x: (x[0] == "(none)", x[0])):
+        o, c = _open_closed(issues)
+        assignee_data[name] = {"open": o, "closed": c}
+
+    return {
+        "total": total,
+        "open": open_count,
+        "closed": closed_count,
+        "by_type": dict(type_counts.most_common()),
+        "by_priority": dict(priority_counts.most_common()),
+        "by_label": dict(label_counts.most_common()),
+        "by_milestone": milestone_data,
+        "by_assignee": assignee_data,
+    }
+
+
+def _print_dimension(title: str, data: dict, show_percent: bool = False):
+    """Print a single dimension breakdown."""
+    click.echo(f"By {title}:")
+    for name, info in data.items():
+        if isinstance(info, dict):
+            line = f"  {name:<12}{info['open']} open / {info['closed']} closed"
+            if show_percent:
+                line += f"  ({info['percent']}%)"
+            click.echo(line)
+
+
 @main.command()
-def stats():
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--by", "dimension", type=click.Choice(["type", "priority", "label", "milestone", "assignee"]),
+              help="Show breakdown for a single dimension")
+def stats(as_json, dimension):
     """Show issue statistics."""
     root = _root()
     _require_init(root)
     all_issues = list_issues(root, status=None)
     total = len(all_issues)
     if total == 0:
-        click.echo("No issues.")
+        if as_json:
+            click.echo(json.dumps({"total": 0, "open": 0, "closed": 0}))
+        else:
+            click.echo("No issues.")
         return
-    open_count = sum(1 for i in all_issues if i.status == "open")
-    closed_count = sum(1 for i in all_issues if i.status == "closed")
-    click.echo(f"Issues: {total} total ({open_count} open, {closed_count} closed)")
 
-    type_counts = Counter(i.type for i in all_issues)
-    type_str = ", ".join(f"{t}={c}" for t, c in type_counts.most_common())
-    click.echo(f"By type: {type_str}")
+    data = _build_stats_data(all_issues)
 
-    label_counts: Counter[str] = Counter()
-    for i in all_issues:
-        for lbl in i.labels:
-            label_counts[lbl] += 1
-    if label_counts:
-        label_str = ", ".join(f"{l}={c}" for l, c in label_counts.most_common())
-        click.echo(f"By label: {label_str}")
+    if as_json:
+        if dimension:
+            key = f"by_{dimension}"
+            click.echo(json.dumps({key: data[key]}, indent=2))
+        else:
+            click.echo(json.dumps(data, indent=2))
+        return
+
+    if dimension:
+        key = f"by_{dimension}"
+        if dimension in ("type", "priority", "label"):
+            vals = data[key]
+            val_str = ", ".join(f"{k}={v}" for k, v in vals.items())
+            click.echo(f"By {dimension}: {val_str}")
+        elif dimension == "milestone":
+            _print_dimension("milestone", data[key], show_percent=True)
+        elif dimension == "assignee":
+            _print_dimension("assignee", data[key])
+        return
+
+    # Full output
+    click.echo(f"Issues: {data['total']} total ({data['open']} open, {data['closed']} closed)")
+    click.echo()
+
+    type_str = ", ".join(f"{k}={v}" for k, v in data["by_type"].items())
+    click.echo(f"By type:     {type_str}")
+
+    priority_str = ", ".join(f"{k}={v}" for k, v in data["by_priority"].items())
+    click.echo(f"By priority: {priority_str}")
+
+    if data["by_label"]:
+        label_str = ", ".join(f"{k}={v}" for k, v in data["by_label"].items())
+        click.echo(f"By label:    {label_str}")
+
+    _print_dimension("milestone", data["by_milestone"], show_percent=True)
+    _print_dimension("assignee", data["by_assignee"])
 
 
 # ── assign / unassign ──────────────────────────────────────
