@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 
 from .git_ops import git_commit, is_git_repo
-from .models import Issue
+from .models import ISSUE_TYPES, Issue
 from .store import init_store, is_initialized, list_issues, load_issue, next_id, save_issue
 
 
@@ -30,13 +30,14 @@ def _print_issue_table(issues: list[Issue]) -> None:
         return
     id_w = max(len(str(i.id)) for i in issues)
     st_w = max(len(i.status) for i in issues)
+    ty_w = max(len(i.type) for i in issues)
     ti_w = max(len(i.title) for i in issues)
-    header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  ASSIGNEE"
+    header = f"{'#':<{id_w}}  {'STATUS':<{st_w}}  {'TYPE':<{ty_w}}  {'TITLE':<{ti_w}}  {'LABELS':<12}  ASSIGNEE"
     click.echo(header)
     for i in issues:
         labels = ",".join(i.labels) if i.labels else "\u2014"
         assignee = i.assignee or "\u2014"
-        click.echo(f"#{i.id:<{id_w}}  {i.status:<{st_w}}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
+        click.echo(f"#{i.id:<{id_w}}  {i.status:<{st_w}}  {i.type:<{ty_w}}  {i.title:<{ti_w}}  {labels:<12}  {assignee}")
 
 
 def _load_or_exit(root: Path, issue_id: int) -> Issue:
@@ -72,10 +73,11 @@ def init():
 
 @main.command()
 @click.option("--title", required=True, help="Issue title")
+@click.option("--type", "-t", default="misc", type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")
 @click.option("--assign", "-a", default=None, help="Assignee")
 @click.option("--body", "-b", default="", help="Issue body text")
-def new(title, label, assign, body):
+def new(title, type, label, assign, body):
     """Create a new issue."""
     root = _root()
     _require_init(root)
@@ -85,6 +87,7 @@ def new(title, label, assign, body):
         id=nid,
         title=title,
         status="open",
+        type=type,
         labels=list(label),
         assignee=assign,
         created_at=now,
@@ -104,14 +107,15 @@ def new(title, label, assign, body):
     type=click.Choice(["open", "closed", "all"]),
     help="Filter by status (default: open)",
 )
+@click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--label", default=None, help="Filter by label")
 @click.option("--assignee", default=None, help="Filter by assignee")
-def list_cmd(status, label, assignee):
+def list_cmd(status, type, label, assignee):
     """List issues (default: open only)."""
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
-    issues = list_issues(root, status=st)
+    issues = list_issues(root, status=st, type=type)
     if label:
         issues = [i for i in issues if label in i.labels]
     if assignee:
@@ -132,6 +136,7 @@ def show(id):
     _require_init(root)
     issue = _load_or_exit(root, id)
     click.echo(f"#{issue.id}  [{issue.status}]  {issue.title}")
+    click.echo(f"Type: {issue.type}")
     if issue.labels:
         click.echo(f"Labels: {', '.join(issue.labels)}")
     if issue.assignee:
@@ -278,12 +283,13 @@ def label_remove(id, name):
     type=click.Choice(["open", "closed", "all"]),
     help="Filter by status",
 )
-def search(query, status):
+@click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
+def search(query, status, type):
     """Full-text search across issue titles and bodies."""
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
-    issues = list_issues(root, status=st)
+    issues = list_issues(root, status=st, type=type)
     q = query.lower()
     matches = [
         i for i in issues

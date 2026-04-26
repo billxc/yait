@@ -59,6 +59,22 @@ class TestNew:
         result = runner.invoke(main, ["new"])
         assert result.exit_code != 0
 
+    def test_new_with_type(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main, ["new", "--title", "A bug", "--type", "bug"], catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.type == "bug"
+
+    def test_new_default_type(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(
+            main, ["new", "--title", "Something"], catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.type == "misc"
+
 
 class TestList:
     def test_list_shows_issues(self, runner: CliRunner, initialized_cli):
@@ -86,6 +102,18 @@ class TestList:
         assert "Bug A" in result.output
         assert "Feature B" not in result.output
 
+    def test_list_filter_by_type(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "A bug", "--type", "bug"], catch_exceptions=False)
+        runner.invoke(main, ["new", "--title", "A feature", "--type", "feature"], catch_exceptions=False)
+        result = runner.invoke(main, ["list", "--type", "bug"], catch_exceptions=False)
+        assert "A bug" in result.output
+        assert "A feature" not in result.output
+
+    def test_list_shows_type_column(self, runner: CliRunner, initialized_cli):
+        runner.invoke(main, ["new", "--title", "Test", "--type", "bug"], catch_exceptions=False)
+        result = runner.invoke(main, ["list"], catch_exceptions=False)
+        assert "TYPE" in result.output
+
 
 class TestShow:
     def test_show_displays_details(self, runner: CliRunner, initialized_cli):
@@ -100,6 +128,13 @@ class TestShow:
     def test_show_nonexistent(self, runner: CliRunner, initialized_cli):
         result = runner.invoke(main, ["show", "999"])
         assert result.exit_code != 0
+
+    def test_show_displays_type(self, runner: CliRunner, initialized_cli):
+        runner.invoke(
+            main, ["new", "--title", "Typed issue", "--type", "bug"], catch_exceptions=False
+        )
+        result = runner.invoke(main, ["show", "1"], catch_exceptions=False)
+        assert "Type: bug" in result.output
 
 
 class TestCloseReopen:
@@ -170,3 +205,16 @@ class TestSearch:
         runner.invoke(main, ["new", "--title", "Something"], catch_exceptions=False)
         result = runner.invoke(main, ["search", "nonexistent"], catch_exceptions=False)
         assert "No matching" in result.output
+
+    def test_search_with_type_filter(self, runner: CliRunner, initialized_cli):
+        runner.invoke(
+            main, ["new", "--title", "Login bug", "--type", "bug"], catch_exceptions=False
+        )
+        runner.invoke(
+            main, ["new", "--title", "Login feature", "--type", "feature"], catch_exceptions=False
+        )
+        result = runner.invoke(
+            main, ["search", "login", "--type", "bug"], catch_exceptions=False
+        )
+        assert "Login bug" in result.output
+        assert "Login feature" not in result.output
