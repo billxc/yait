@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from .git_ops import git_commit, is_git_repo
-from .models import ISSUE_TYPES, Issue
+from .models import ISSUE_TYPES, PRIORITIES, Issue
 from .store import init_store, is_initialized, list_issues, load_issue, next_id, save_issue
 
 
@@ -120,20 +120,17 @@ def new(title, type, label, assign, body):
     help="Filter by status (default: open)",
 )
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
+@click.option("--priority", default=None, type=click.Choice(PRIORITIES), help="Filter by priority")
 @click.option("--label", default=None, help="Filter by label")
 @click.option("--assignee", default=None, help="Filter by assignee")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.option("--sort", default="id", type=click.Choice(["id", "created", "updated"]), help="Sort order (default: id)")
-def list_cmd(status, type, label, assignee, as_json, sort):
+def list_cmd(status, type, priority, label, assignee, as_json, sort):
     """List issues (default: open only)."""
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
-    issues = list_issues(root, status=st, type=type)
-    if label:
-        issues = [i for i in issues if label in i.labels]
-    if assignee:
-        issues = [i for i in issues if i.assignee == assignee]
+    issues = list_issues(root, status=st, type=type, label=label, assignee=assignee, priority=priority)
     if sort == "created":
         issues.sort(key=lambda i: i.created_at)
     elif sort == "updated":

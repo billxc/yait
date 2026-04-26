@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 ISSUE_TYPES = ("feature", "bug", "enhancement", "misc")
+PRIORITIES = ("p0", "p1", "p2", "p3", "none")
 
 
 @dataclass
@@ -10,6 +11,7 @@ class Issue:
     title: str
     status: str = "open"
     type: str = "misc"
+    priority: str = "none"
     labels: list[str] = field(default_factory=list)
     assignee: str | None = None
     created_at: str = ""
@@ -22,6 +24,7 @@ class Issue:
             "title": self.title,
             "status": self.status,
             "type": self.type,
+            "priority": self.priority,
             "labels": self.labels,
             "assignee": self.assignee,
             "created_at": self.created_at,
