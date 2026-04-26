@@ -14,6 +14,7 @@ class Issue:
     priority: str = "none"
     labels: list[str] = field(default_factory=list)
     assignee: str | None = None
+    milestone: str | None = None
     created_at: str = ""
     updated_at: str = ""
     body: str = ""
@@ -27,6 +28,7 @@ class Issue:
             "priority": self.priority,
             "labels": self.labels,
             "assignee": self.assignee,
+            "milestone": self.milestone,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "body": self.body,

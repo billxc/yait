@@ -79,6 +79,7 @@ def save_issue(root: Path, issue: Issue) -> None:
         "priority": issue.priority,
         "labels": issue.labels,
         "assignee": issue.assignee,
+        "milestone": issue.milestone,
         "created_at": issue.created_at,
         "updated_at": issue.updated_at,
     }
@@ -107,10 +108,18 @@ def load_issue(root: Path, issue_id: int) -> Issue:
         priority=fm.get("priority", "none"),
         labels=fm.get("labels") or [],
         assignee=fm.get("assignee") or None,
+        milestone=fm.get("milestone") or None,
         created_at=fm.get("created_at", ""),
         updated_at=fm.get("updated_at", ""),
         body=body,
     )
+
+
+def delete_issue(root: Path, issue_id: int) -> None:
+    path = _issue_path(root, issue_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Issue {issue_id} not found")
+    path.unlink()
 
 
 def list_issues(
@@ -120,6 +129,7 @@ def list_issues(
     label: str | None = None,
     assignee: str | None = None,
     priority: str | None = None,
+    milestone: str | None = None,
 ) -> list[Issue]:
     issues_path = _issues_dir(root)
     if not issues_path.exists():
@@ -138,6 +148,8 @@ def list_issues(
         if assignee and issue.assignee != assignee:
             continue
         if priority and issue.priority != priority:
+            continue
+        if milestone and issue.milestone != milestone:
             continue
         issues.append(issue)
     return issues

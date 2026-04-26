@@ -12,7 +12,7 @@ import click
 from . import __version__
 from .git_ops import git_commit, git_log, is_git_repo
 from .models import ISSUE_TYPES, PRIORITIES, Issue
-from .store import init_store, is_initialized, list_issues, load_issue, next_id, save_issue
+from .store import init_store, is_initialized, list_issues, load_issue, next_id, save_issue, delete_issue
 
 
 def _root() -> Path:
@@ -116,7 +116,8 @@ def init():
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")
 @click.option("--assign", "-a", default=None, help="Assignee")
 @click.option("--body", "-b", default="", help="Issue body text")
-def new(title, title_opt, type, label, assign, body):
+@click.option("--milestone", "-m", default=None, help="Milestone (e.g. v1.0)")
+def new(title, title_opt, type, label, assign, body, milestone):
     """Create a new issue.
 
     \b
@@ -124,6 +125,7 @@ def new(title, title_opt, type, label, assign, body):
       yait new "Fix login bug"
       yait new "Add dark mode" -t feature -l ui
       yait new "Crash on startup" -t bug -a alice -b "Repro: open app"
+      yait new "Release prep" --milestone v1.0
     """
     resolved = title or title_opt
     if not resolved:
@@ -139,6 +141,7 @@ def new(title, title_opt, type, label, assign, body):
         type=type,
         labels=list(label),
         assignee=assign,
+        milestone=milestone,
         created_at=now,
         updated_at=now,
         body=body,
@@ -160,9 +163,10 @@ def new(title, title_opt, type, label, assign, body):
 @click.option("--priority", default=None, type=click.Choice(PRIORITIES), help="Filter by priority")
 @click.option("--label", default=None, help="Filter by label")
 @click.option("--assignee", default=None, help="Filter by assignee")
+@click.option("--milestone", default=None, help="Filter by milestone")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.option("--sort", default="id", type=click.Choice(["id", "created", "updated"]), help="Sort order (default: id)")
-def list_cmd(status, type, priority, label, assignee, as_json, sort):
+def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort):
     """List issues (default: open only).
 
     \b
@@ -170,12 +174,13 @@ def list_cmd(status, type, priority, label, assignee, as_json, sort):
       yait list
       yait list --status all
       yait list --type bug --label urgent
+      yait list --milestone v1.0
       yait list --assignee alice --sort updated --json
     """
     root = _root()
     _require_init(root)
     st = None if status == "all" else status
-    issues = list_issues(root, status=st, type=type, label=label, assignee=assignee, priority=priority)
+    issues = list_issues(root, status=st, type=type, label=label, assignee=assignee, priority=priority, milestone=milestone)
     if sort == "created":
         issues.sort(key=lambda i: i.created_at)
     elif sort == "updated":
@@ -216,6 +221,8 @@ def show(id, as_json):
     click.echo(f"Type: {click.style(issue.type, fg=_type_color(issue.type))}")
     if issue.labels:
         click.echo(f"Labels: {', '.join(issue.labels)}")
+    if issue.milestone:
+        click.echo(f"Milestone: {issue.milestone}")
     if issue.assignee:
         click.echo(f"Assignee: {issue.assignee}")
     click.echo(f"Created: {issue.created_at}")
@@ -243,6 +250,29 @@ def close(ids):
         save_issue(root, issue)
         click.echo(f"Closed issue #{id}: {issue.title}")
         git_commit(root, f"yait: close issue #{id}")
+
+
+# ── delete ──────────────────────────────────────────────────
+
+@main.command()
+@click.argument("id", type=int)
+@click.option("--force", "-f", is_flag=True, default=False, help="Skip confirmation prompt")
+def delete(id, force):
+    """Delete an issue permanently.
+
+    \b
+    Examples:
+      yait delete 1
+      yait delete 1 -f   # skip confirmation
+    """
+    root = _root()
+    _require_init(root)
+    issue = _load_or_exit(root, id)
+    if not force:
+        click.confirm(f"Are you sure you want to delete issue #{id}?", abort=True)
+    delete_issue(root, id)
+    click.echo(f"Deleted issue #{id}: {issue.title}")
+    git_commit(root, f"yait: delete issue #{id}")
 
 
 # ── reopen ───────────────────────────────────────────────────
@@ -298,19 +328,21 @@ def comment(id, message):
 @click.option("--type", "-t", "new_type", default=None, type=click.Choice(ISSUE_TYPES), help="New type")
 @click.option("--assign", "-a", "new_assign", default=None, help="New assignee")
 @click.option("--body", "-b", "new_body", default=None, help="New body")
-def edit(id, new_title, new_type, new_assign, new_body):
+@click.option("--milestone", "-m", "new_milestone", default=None, help="New milestone")
+def edit(id, new_title, new_type, new_assign, new_body, new_milestone):
     """Edit an issue inline or in $EDITOR.
 
     \b
     Examples:
       yait edit 1 -T "New title"
       yait edit 1 -t bug -a bob
+      yait edit 1 --milestone v2.0
       yait edit 1                  # opens $EDITOR
     """
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
-    if any(v is not None for v in (new_title, new_type, new_assign, new_body)):
+    if any(v is not None for v in (new_title, new_type, new_assign, new_body, new_milestone)):
         if new_title is not None:
             issue.title = new_title
         if new_type is not None:
@@ -319,6 +351,8 @@ def edit(id, new_title, new_type, new_assign, new_body):
             issue.assignee = new_assign or None
         if new_body is not None:
             issue.body = new_body
+        if new_milestone is not None:
+            issue.milestone = new_milestone or None
     else:
         template = f"title: {issue.title}\n\n{issue.body}"
         result = click.edit(template)
