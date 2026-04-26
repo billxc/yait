@@ -15,6 +15,19 @@ ISSUES_DIR = "issues"
 TEMPLATES_DIR = "templates"
 CONFIG_FILE = "config.yaml"
 
+# Default values for config sections
+_DEFAULT_DEFAULTS = {
+    "type": "misc",
+    "priority": "none",
+    "assignee": None,
+    "labels": [],
+}
+
+_DEFAULT_DISPLAY = {
+    "max_title_width": 50,
+    "date_format": "short",
+}
+
 
 def _yait_root(root: Path) -> Path:
     return root / YAIT_DIR
@@ -58,6 +71,112 @@ def _read_config(root: Path) -> dict:
 
 def _write_config(root: Path, cfg: dict) -> None:
     _config_path(root).write_text(yaml.dump(cfg, default_flow_style=False))
+
+
+def get_defaults(root: Path) -> dict:
+    cfg = _read_config(root)
+    saved = cfg.get("defaults") or {}
+    result = dict(_DEFAULT_DEFAULTS)
+    result.update(saved)
+    # Ensure labels is always a list
+    if result["labels"] is None:
+        result["labels"] = []
+    return result
+
+
+def get_display(root: Path) -> dict:
+    cfg = _read_config(root)
+    saved = cfg.get("display") or {}
+    result = dict(_DEFAULT_DISPLAY)
+    result.update(saved)
+    return result
+
+
+def get_config_value(root: Path, key: str):
+    """Get a config value by dotted key (e.g. 'defaults.type')."""
+    parts = key.split(".", 1)
+    if len(parts) != 2:
+        raise KeyError(f"Invalid config key: {key!r}. Use 'section.field' format.")
+    section, field = parts
+    if section == "defaults":
+        defaults = get_defaults(root)
+        if field not in _DEFAULT_DEFAULTS:
+            raise KeyError(f"Unknown config key: {key!r}")
+        return defaults[field]
+    elif section == "display":
+        display = get_display(root)
+        if field not in _DEFAULT_DISPLAY:
+            raise KeyError(f"Unknown config key: {key!r}")
+        return display[field]
+    else:
+        raise KeyError(f"Unknown config section: {section!r}")
+
+
+def set_config_value(root: Path, key: str, value: str) -> None:
+    """Set a config value by dotted key."""
+    parts = key.split(".", 1)
+    if len(parts) != 2:
+        raise KeyError(f"Invalid config key: {key!r}. Use 'section.field' format.")
+    section, field = parts
+    if section == "defaults":
+        if field not in _DEFAULT_DEFAULTS:
+            raise KeyError(f"Unknown config key: {key!r}")
+    elif section == "display":
+        if field not in _DEFAULT_DISPLAY:
+            raise KeyError(f"Unknown config key: {key!r}")
+    else:
+        raise KeyError(f"Unknown config section: {section!r}")
+
+    # Type coerce
+    converted = _coerce_config_value(section, field, value)
+
+    cfg = _read_config(root)
+    if section not in cfg:
+        cfg[section] = {}
+    cfg[section][field] = converted
+    _write_config(root, cfg)
+
+
+def reset_config_value(root: Path, key: str) -> None:
+    """Reset a config value to its default."""
+    parts = key.split(".", 1)
+    if len(parts) != 2:
+        raise KeyError(f"Invalid config key: {key!r}. Use 'section.field' format.")
+    section, field = parts
+    if section == "defaults":
+        if field not in _DEFAULT_DEFAULTS:
+            raise KeyError(f"Unknown config key: {key!r}")
+    elif section == "display":
+        if field not in _DEFAULT_DISPLAY:
+            raise KeyError(f"Unknown config key: {key!r}")
+    else:
+        raise KeyError(f"Unknown config section: {section!r}")
+
+    cfg = _read_config(root)
+    if section in cfg and isinstance(cfg[section], dict):
+        cfg[section].pop(field, None)
+        if not cfg[section]:
+            del cfg[section]
+    _write_config(root, cfg)
+
+
+def _coerce_config_value(section: str, field: str, value: str):
+    """Convert a string value to the appropriate type for the config field."""
+    if section == "display" and field == "max_title_width":
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(f"'{field}' must be an integer, got {value!r}")
+    if section == "defaults" and field == "labels":
+        # Accept comma-separated or empty string
+        if not value or value == "[]":
+            return []
+        return [v.strip() for v in value.split(",") if v.strip()]
+    if section == "defaults" and field == "assignee":
+        if value in ("null", "none", ""):
+            return None
+        return value
+    return value
 
 
 def next_id(root: Path) -> int:
