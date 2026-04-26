@@ -12,6 +12,10 @@ from yait.store import (
     load_issue,
     next_id,
     save_issue,
+    save_milestone,
+    load_milestone,
+    list_milestones,
+    delete_milestone,
 )
 
 
@@ -392,3 +396,127 @@ def test_save_issue_assignee_none_roundtrip(initialized_root: Path):
     save_issue(initialized_root, issue)
     loaded = load_issue(initialized_root, 1)
     assert loaded.assignee is None
+
+
+# ---------------------------------------------------------------------------
+# Milestone store tests
+# ---------------------------------------------------------------------------
+
+from yait.models import Milestone
+
+
+def test_save_and_load_milestone(initialized_root: Path):
+    """Round-trip: save then load returns equivalent milestone."""
+    m = Milestone(name="v1.0", description="First release", due_date="2026-06-01",
+                  created_at="2026-04-26T12:00:00+08:00")
+    save_milestone(initialized_root, m)
+    loaded = load_milestone(initialized_root, "v1.0")
+    assert loaded.name == "v1.0"
+    assert loaded.status == "open"
+    assert loaded.description == "First release"
+    assert loaded.due_date == "2026-06-01"
+    assert loaded.created_at == "2026-04-26T12:00:00+08:00"
+
+
+def test_save_milestone_duplicate_raises(initialized_root: Path):
+    """Creating a milestone with a duplicate name raises ValueError."""
+    save_milestone(initialized_root, Milestone(name="v1.0"))
+    with pytest.raises(ValueError, match="already exists"):
+        save_milestone(initialized_root, Milestone(name="v1.0"))
+
+
+def test_load_milestone_not_found(initialized_root: Path):
+    """Loading a non-existent milestone raises KeyError."""
+    with pytest.raises(KeyError, match="not found"):
+        load_milestone(initialized_root, "nope")
+
+
+def test_list_milestones_empty(initialized_root: Path):
+    """list_milestones returns empty list when none exist."""
+    assert list_milestones(initialized_root) == []
+
+
+def test_list_milestones_all(initialized_root: Path):
+    """list_milestones returns all milestones."""
+    save_milestone(initialized_root, Milestone(name="v1.0"))
+    save_milestone(initialized_root, Milestone(name="v2.0", status="closed"))
+    ms = list_milestones(initialized_root)
+    assert len(ms) == 2
+    assert {m.name for m in ms} == {"v1.0", "v2.0"}
+
+
+def test_list_milestones_filter_status(initialized_root: Path):
+    """list_milestones filters by status."""
+    save_milestone(initialized_root, Milestone(name="v1.0", status="open"))
+    save_milestone(initialized_root, Milestone(name="v2.0", status="closed"))
+    save_milestone(initialized_root, Milestone(name="v3.0", status="open"))
+    open_ms = list_milestones(initialized_root, status="open")
+    assert len(open_ms) == 2
+    assert all(m.status == "open" for m in open_ms)
+    closed_ms = list_milestones(initialized_root, status="closed")
+    assert len(closed_ms) == 1
+    assert closed_ms[0].name == "v2.0"
+
+
+def test_delete_milestone_no_references(initialized_root: Path):
+    """delete_milestone removes an unreferenced milestone."""
+    save_milestone(initialized_root, Milestone(name="v1.0"))
+    delete_milestone(initialized_root, "v1.0")
+    assert list_milestones(initialized_root) == []
+
+
+def test_delete_milestone_not_found(initialized_root: Path):
+    """delete_milestone raises KeyError for non-existent milestone."""
+    with pytest.raises(KeyError, match="not found"):
+        delete_milestone(initialized_root, "nope")
+
+
+def test_delete_milestone_with_references_no_force(initialized_root: Path):
+    """delete_milestone raises ValueError when issues reference it."""
+    save_milestone(initialized_root, Milestone(name="v1.0"))
+    save_issue(initialized_root, Issue(id=1, title="A", milestone="v1.0"))
+    save_issue(initialized_root, Issue(id=2, title="B", milestone="v1.0"))
+    with pytest.raises(ValueError, match="2 issues still reference it"):
+        delete_milestone(initialized_root, "v1.0")
+    # milestone should still exist
+    assert load_milestone(initialized_root, "v1.0").name == "v1.0"
+
+
+def test_delete_milestone_force_clears_references(initialized_root: Path):
+    """delete_milestone with force removes milestone and clears issue refs."""
+    save_milestone(initialized_root, Milestone(name="v1.0"))
+    save_issue(initialized_root, Issue(id=1, title="A", milestone="v1.0"))
+    save_issue(initialized_root, Issue(id=2, title="B", milestone="v1.0"))
+    save_issue(initialized_root, Issue(id=3, title="C", milestone="v2.0"))
+    delete_milestone(initialized_root, "v1.0", force=True)
+    assert list_milestones(initialized_root) == []
+    assert load_issue(initialized_root, 1).milestone is None
+    assert load_issue(initialized_root, 2).milestone is None
+    assert load_issue(initialized_root, 3).milestone == "v2.0"
+
+
+def test_save_milestone_invalid_due_date(initialized_root: Path):
+    """save_milestone rejects invalid due_date format."""
+    m = Milestone(name="v1.0", due_date="not-a-date")
+    with pytest.raises(ValueError, match="Invalid due_date format"):
+        save_milestone(initialized_root, m)
+
+
+def test_backward_compat_no_milestones_field(initialized_root: Path):
+    """Old config without milestones field works (defaults to empty dict)."""
+    cfg_path = initialized_root / ".yait" / "config.yaml"
+    cfg = yaml.safe_load(cfg_path.read_text())
+    cfg.pop("milestones", None)
+    cfg_path.write_text(yaml.dump(cfg, default_flow_style=False))
+    assert list_milestones(initialized_root) == []
+    save_milestone(initialized_root, Milestone(name="v1.0"))
+    assert len(list_milestones(initialized_root)) == 1
+
+
+def test_milestone_persisted_in_config_yaml(initialized_root: Path):
+    """Milestone data is stored in config.yaml milestones section."""
+    save_milestone(initialized_root, Milestone(name="v1.0", description="test"))
+    cfg = yaml.safe_load((initialized_root / ".yait" / "config.yaml").read_text())
+    assert "milestones" in cfg
+    assert "v1.0" in cfg["milestones"]
+    assert cfg["milestones"]["v1.0"]["description"] == "test"

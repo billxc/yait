@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import Issue
+from .models import Issue, Milestone
 
 YAIT_DIR = ".yait"
 ISSUES_DIR = "issues"
@@ -153,3 +153,68 @@ def list_issues(
             continue
         issues.append(issue)
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Milestone CRUD
+# ---------------------------------------------------------------------------
+
+
+def _get_milestones(cfg: dict) -> dict:
+    return cfg.setdefault("milestones", {})
+
+
+def save_milestone(root: Path, milestone: Milestone) -> None:
+    milestone.validate_due_date()
+    cfg = _read_config(root)
+    ms = _get_milestones(cfg)
+    if milestone.name in ms:
+        raise ValueError(f"Milestone {milestone.name!r} already exists")
+    ms[milestone.name] = milestone.to_dict()
+    _write_config(root, cfg)
+
+
+def load_milestone(root: Path, name: str) -> Milestone:
+    cfg = _read_config(root)
+    ms = _get_milestones(cfg)
+    if name not in ms:
+        raise KeyError(f"Milestone {name!r} not found")
+    return Milestone.from_dict(name, ms[name])
+
+
+def list_milestones(root: Path, status: str | None = None) -> list[Milestone]:
+    cfg = _read_config(root)
+    ms = _get_milestones(cfg)
+    result = []
+    for name, data in ms.items():
+        m = Milestone.from_dict(name, data)
+        if status and m.status != status:
+            continue
+        result.append(m)
+    return result
+
+
+def delete_milestone(root: Path, name: str, force: bool = False) -> None:
+    cfg = _read_config(root)
+    ms = _get_milestones(cfg)
+    if name not in ms:
+        raise KeyError(f"Milestone {name!r} not found")
+
+    referencing = [
+        i for i in list_issues(root) if i.milestone == name
+    ]
+
+    if referencing and not force:
+        count = len(referencing)
+        raise ValueError(
+            f"Cannot delete milestone {name!r}: {count} issues still reference it. "
+            "Use force=True to remove references."
+        )
+
+    del ms[name]
+    _write_config(root, cfg)
+
+    if force and referencing:
+        for issue in referencing:
+            issue.milestone = None
+            save_issue(root, issue)
