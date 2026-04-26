@@ -109,14 +109,15 @@ def init():
 
 # ── new ──────────────────────────────────────────────────────
 
-@main.command()
+@main.command(context_settings=dict(ignore_unknown_options=True))
 @click.argument("title", required=False, default=None)
 @click.option("--title", "title_opt", default=None, help="Issue title")
 @click.option("--type", "-t", default="misc", type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
+@click.option("--priority", "-p", default="none", type=click.Choice(PRIORITIES), help="Priority (default: none)")
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")
 @click.option("--assign", "-a", default=None, help="Assignee")
 @click.option("--body", "-b", default="", help="Issue body text")
-def new(title, title_opt, type, label, assign, body):
+def new(title, title_opt, type, priority, label, assign, body):
     """Create a new issue.
 
     \b
@@ -124,6 +125,7 @@ def new(title, title_opt, type, label, assign, body):
       yait new "Fix login bug"
       yait new "Add dark mode" -t feature -l ui
       yait new "Crash on startup" -t bug -a alice -b "Repro: open app"
+      yait new "Critical bug" -t bug --priority p0
     """
     resolved = title or title_opt
     if not resolved:
@@ -137,6 +139,7 @@ def new(title, title_opt, type, label, assign, body):
         title=resolved,
         status="open",
         type=type,
+        priority=priority,
         labels=list(label),
         assignee=assign,
         created_at=now,
@@ -214,6 +217,8 @@ def show(id, as_json):
     status_str = click.style(issue.status, fg=_status_color(issue.status))
     click.echo(f"#{issue.id}  [{status_str}]  {issue.title}")
     click.echo(f"Type: {click.style(issue.type, fg=_type_color(issue.type))}")
+    if issue.priority and issue.priority != "none":
+        click.echo(f"Priority: {issue.priority}")
     if issue.labels:
         click.echo(f"Labels: {', '.join(issue.labels)}")
     if issue.assignee:
@@ -296,25 +301,29 @@ def comment(id, message):
 @click.argument("id", type=int)
 @click.option("--title", "-T", "new_title", default=None, help="New title")
 @click.option("--type", "-t", "new_type", default=None, type=click.Choice(ISSUE_TYPES), help="New type")
+@click.option("--priority", "-p", "new_priority", default=None, type=click.Choice(PRIORITIES), help="New priority")
 @click.option("--assign", "-a", "new_assign", default=None, help="New assignee")
 @click.option("--body", "-b", "new_body", default=None, help="New body")
-def edit(id, new_title, new_type, new_assign, new_body):
+def edit(id, new_title, new_type, new_priority, new_assign, new_body):
     """Edit an issue inline or in $EDITOR.
 
     \b
     Examples:
       yait edit 1 -T "New title"
       yait edit 1 -t bug -a bob
+      yait edit 1 --priority p0
       yait edit 1                  # opens $EDITOR
     """
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
-    if any(v is not None for v in (new_title, new_type, new_assign, new_body)):
+    if any(v is not None for v in (new_title, new_type, new_priority, new_assign, new_body)):
         if new_title is not None:
             issue.title = new_title
         if new_type is not None:
             issue.type = new_type
+        if new_priority is not None:
+            issue.priority = new_priority
         if new_assign is not None:
             issue.assignee = new_assign or None
         if new_body is not None:
@@ -383,7 +392,7 @@ def label_remove(id, name):
 
 # ── search ───────────────────────────────────────────────────
 
-@main.command()
+@main.command(context_settings=dict(ignore_unknown_options=True))
 @click.argument("query")
 @click.option(
     "--status", default="open",
