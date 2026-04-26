@@ -1,4 +1,4 @@
-from yait.models import Issue
+from yait.models import Issue, ISSUE_TYPES
 
 
 class TestIssueDataclass:
@@ -10,6 +10,21 @@ class TestIssueDataclass:
     def test_default_status_is_open(self):
         issue = Issue(id=1, title="test")
         assert issue.status == "open"
+
+    def test_default_type_is_misc(self):
+        issue = Issue(id=1, title="t")
+        assert issue.type == "misc"
+
+    def test_create_with_type(self):
+        issue = Issue(id=1, title="t", type="bug")
+        assert issue.type == "bug"
+
+    def test_issue_types_constant(self):
+        assert len(ISSUE_TYPES) == 4
+        assert "feature" in ISSUE_TYPES
+        assert "bug" in ISSUE_TYPES
+        assert "enhancement" in ISSUE_TYPES
+        assert "misc" in ISSUE_TYPES
 
     def test_default_labels_empty_list(self):
         issue = Issue(id=1, title="test")
@@ -56,6 +71,7 @@ class TestIssueDataclass:
             id=42,
             title="full issue",
             status="closed",
+            type="bug",
             labels=["bug", "urgent"],
             assignee="bob",
             created_at="2026-04-26T16:00:00+08:00",
@@ -65,6 +81,7 @@ class TestIssueDataclass:
         assert issue.id == 42
         assert issue.title == "full issue"
         assert issue.status == "closed"
+        assert issue.type == "bug"
         assert issue.labels == ["bug", "urgent"]
         assert issue.assignee == "bob"
         assert issue.created_at == "2026-04-26T16:00:00+08:00"
