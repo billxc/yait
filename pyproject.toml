@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yait"
+version = "0.1.0"
+description = "Yet Another Issue Tracker — markdown + git"
+requires-python = ">=3.10"
+dependencies = ["click>=8.0", "pyyaml>=6.0"]
+
+[project.scripts]
+yait = "yait.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yait"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
