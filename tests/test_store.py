@@ -520,3 +520,104 @@ def test_milestone_persisted_in_config_yaml(initialized_root: Path):
     assert "milestones" in cfg
     assert "v1.0" in cfg["milestones"]
     assert cfg["milestones"]["v1.0"]["description"] == "test"
+
+
+# ---------------------------------------------------------------------------
+# Template CRUD
+# ---------------------------------------------------------------------------
+
+from yait.models import Template
+from yait.store import save_template, load_template, list_templates, delete_template
+
+
+def test_init_store_creates_templates_dir(yait_root: Path):
+    """init_store creates .yait/templates/ directory."""
+    init_store(yait_root)
+    assert (yait_root / ".yait" / "templates").is_dir()
+
+
+def test_save_and_load_template(initialized_root: Path):
+    """Round-trip: save then load returns equivalent template."""
+    tmpl = Template(
+        name="bug",
+        type="bug",
+        priority="p1",
+        labels=["needs-triage"],
+        body="## Description\n\n[Describe the bug]",
+    )
+    save_template(initialized_root, tmpl)
+    loaded = load_template(initialized_root, "bug")
+    assert loaded.name == "bug"
+    assert loaded.type == "bug"
+    assert loaded.priority == "p1"
+    assert loaded.labels == ["needs-triage"]
+    assert loaded.body == "## Description\n\n[Describe the bug]"
+
+
+def test_save_template_file_format(initialized_root: Path):
+    """Template is saved as .md with YAML frontmatter."""
+    tmpl = Template(name="feat", type="feature", priority="p2", labels=["ui"])
+    save_template(initialized_root, tmpl)
+    path = initialized_root / ".yait" / "templates" / "feat.md"
+    assert path.exists()
+    text = path.read_text()
+    assert text.startswith("---\n")
+    assert "name: feat" in text
+    assert "type: feature" in text
+
+
+def test_list_templates_empty(initialized_root: Path):
+    """list_templates returns empty list when no templates exist."""
+    assert list_templates(initialized_root) == []
+
+
+def test_list_templates(initialized_root: Path):
+    """list_templates returns all saved templates sorted by name."""
+    save_template(initialized_root, Template(name="feature", type="feature"))
+    save_template(initialized_root, Template(name="bug", type="bug"))
+    templates = list_templates(initialized_root)
+    assert len(templates) == 2
+    assert templates[0].name == "bug"
+    assert templates[1].name == "feature"
+
+
+def test_delete_template(initialized_root: Path):
+    """delete_template removes the template file."""
+    save_template(initialized_root, Template(name="bug", type="bug"))
+    delete_template(initialized_root, "bug")
+    assert list_templates(initialized_root) == []
+
+
+def test_delete_template_not_found(initialized_root: Path):
+    """delete_template raises FileNotFoundError with available list."""
+    save_template(initialized_root, Template(name="feature"))
+    with pytest.raises(FileNotFoundError, match="not found.*Available: feature"):
+        delete_template(initialized_root, "bug")
+
+
+def test_load_template_not_found(initialized_root: Path):
+    """load_template raises FileNotFoundError with available list."""
+    save_template(initialized_root, Template(name="bug"))
+    with pytest.raises(FileNotFoundError, match="not found.*Available: bug"):
+        load_template(initialized_root, "feature")
+
+
+def test_load_template_not_found_empty(initialized_root: Path):
+    """load_template shows 'none' when no templates exist."""
+    with pytest.raises(FileNotFoundError, match="Available: none"):
+        load_template(initialized_root, "bug")
+
+
+def test_save_template_overwrite(initialized_root: Path):
+    """Saving a template with same name overwrites it."""
+    save_template(initialized_root, Template(name="bug", type="bug", priority="p0"))
+    save_template(initialized_root, Template(name="bug", type="bug", priority="p2"))
+    loaded = load_template(initialized_root, "bug")
+    assert loaded.priority == "p2"
+
+
+def test_template_with_empty_body(initialized_root: Path):
+    """Template with no body round-trips correctly."""
+    save_template(initialized_root, Template(name="minimal", type="misc"))
+    loaded = load_template(initialized_root, "minimal")
+    assert loaded.body == ""

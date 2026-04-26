@@ -5,7 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from yait.cli import main
-from yait.store import load_issue, load_milestone, list_milestones
+from yait.store import load_issue, load_milestone, list_milestones, save_template, load_template, list_templates
 
 
 @pytest.fixture
@@ -1092,3 +1092,132 @@ class TestBulkFilterType:
             "bulk", "type", "bug", "1", "--filter-status", "open",
         ], catch_exceptions=False)
         assert "Cannot use both issue IDs and --filter options." in result.output
+
+
+# ── Template CLI Tests ──────────────────────────────────────
+
+
+from yait.models import Template
+
+
+def _setup_bug_template(root):
+    """Helper: save a bug template directly via store."""
+    save_template(root, Template(
+        name="bug",
+        type="bug",
+        priority="p1",
+        labels=["needs-triage"],
+        body="## Description\n\n[Describe the bug]",
+    ))
+
+
+class TestTemplateList:
+    def test_list_empty(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["template", "list"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "No templates found." in result.output
+
+    def test_list_shows_templates(self, runner: CliRunner, initialized_cli):
+        _setup_bug_template(initialized_cli)
+        save_template(initialized_cli, Template(name="feature", type="feature"))
+        result = runner.invoke(main, ["template", "list"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "bug" in result.output
+        assert "feature" in result.output
+        assert "needs-triage" in result.output
+
+
+class TestTemplateDelete:
+    def test_delete_template(self, runner: CliRunner, initialized_cli):
+        _setup_bug_template(initialized_cli)
+        result = runner.invoke(main, ["template", "delete", "bug"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Deleted template 'bug'" in result.output
+        assert list_templates(initialized_cli) == []
+
+    def test_delete_nonexistent(self, runner: CliRunner, initialized_cli):
+        result = runner.invoke(main, ["template", "delete", "nope"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+
+class TestTemplateCreate:
+    def test_create_via_editor(self, runner: CliRunner, initialized_cli, monkeypatch):
+        """Simulate editor returning a valid template."""
+        template_text = (
+            "---\nname: bug\ntype: bug\npriority: p1\nlabels:\n- needs-triage\n---\n\n"
+            "## Description\n\n[Describe the bug]\n"
+        )
+        monkeypatch.setattr("click.edit", lambda text=None: template_text)
+        result = runner.invoke(main, ["template", "create", "bug"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Saved template 'bug'" in result.output
+        tmpl = load_template(initialized_cli, "bug")
+        assert tmpl.type == "bug"
+        assert tmpl.priority == "p1"
+        assert tmpl.labels == ["needs-triage"]
+
+    def test_create_aborted(self, runner: CliRunner, initialized_cli, monkeypatch):
+        """Editor returning None aborts."""
+        monkeypatch.setattr("click.edit", lambda text=None: None)
+        result = runner.invoke(main, ["template", "create", "bug"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
+
+
+class TestNewWithTemplate:
+    def test_new_with_template(self, runner: CliRunner, initialized_cli):
+        """--template fills type, priority, labels, body from template."""
+        _setup_bug_template(initialized_cli)
+        result = runner.invoke(main, [
+            "new", "Login crash", "--template", "bug",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.type == "bug"
+        assert issue.priority == "p1"
+        assert issue.labels == ["needs-triage"]
+        assert "Description" in issue.body
+
+    def test_template_cli_overrides(self, runner: CliRunner, initialized_cli):
+        """CLI args override template values."""
+        _setup_bug_template(initialized_cli)
+        result = runner.invoke(main, [
+            "new", "Login crash", "--template", "bug",
+            "-t", "feature", "-p", "p0", "-l", "custom",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.type == "feature"
+        assert issue.priority == "p0"
+        assert issue.labels == ["custom"]
+
+    def test_template_body_overridden(self, runner: CliRunner, initialized_cli):
+        """--body overrides template body."""
+        _setup_bug_template(initialized_cli)
+        result = runner.invoke(main, [
+            "new", "Login crash", "--template", "bug", "-b", "custom body",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.body == "custom body"
+
+    def test_template_not_found(self, runner: CliRunner, initialized_cli):
+        """--template with nonexistent name fails with helpful message."""
+        result = runner.invoke(main, [
+            "new", "test", "--template", "nope",
+        ])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+        assert "Available:" in result.output
+
+    def test_new_without_template_defaults(self, runner: CliRunner, initialized_cli):
+        """Without --template, defaults are misc/none as before."""
+        result = runner.invoke(main, [
+            "new", "plain issue",
+        ], catch_exceptions=False)
+        assert result.exit_code == 0
+        issue = load_issue(initialized_cli, 1)
+        assert issue.type == "misc"
+        assert issue.priority == "none"
+        assert issue.labels == []

@@ -8,10 +8,11 @@ from pathlib import Path
 
 import yaml
 
-from .models import Issue, Milestone
+from .models import Issue, Milestone, Template
 
 YAIT_DIR = ".yait"
 ISSUES_DIR = "issues"
+TEMPLATES_DIR = "templates"
 CONFIG_FILE = "config.yaml"
 
 
@@ -23,12 +24,17 @@ def _issues_dir(root: Path) -> Path:
     return _yait_root(root) / ISSUES_DIR
 
 
+def _templates_dir(root: Path) -> Path:
+    return _yait_root(root) / TEMPLATES_DIR
+
+
 def _config_path(root: Path) -> Path:
     return _yait_root(root) / CONFIG_FILE
 
 
 def init_store(root: Path) -> None:
     _issues_dir(root).mkdir(parents=True, exist_ok=True)
+    _templates_dir(root).mkdir(parents=True, exist_ok=True)
     cfg = _config_path(root)
     if not cfg.exists():
         cfg.write_text(yaml.dump({"version": 1, "next_id": 1}, default_flow_style=False))
@@ -228,3 +234,75 @@ def delete_milestone(root: Path, name: str, force: bool = False) -> None:
         for issue in referencing:
             issue.milestone = None
             save_issue(root, issue)
+
+
+# ---------------------------------------------------------------------------
+# Template CRUD
+# ---------------------------------------------------------------------------
+
+
+def _template_path(root: Path, name: str) -> Path:
+    return _templates_dir(root) / f"{name}.md"
+
+
+def save_template(root: Path, template: Template) -> None:
+    _templates_dir(root).mkdir(parents=True, exist_ok=True)
+    fm = {
+        "name": template.name,
+        "type": template.type,
+        "priority": template.priority,
+        "labels": template.labels,
+    }
+    text = "---\n" + yaml.dump(fm, default_flow_style=False).rstrip("\n") + "\n---\n"
+    if template.body:
+        text += "\n" + template.body + "\n"
+    _template_path(root, template.name).write_text(text)
+
+
+def load_template(root: Path, name: str) -> Template:
+    path = _template_path(root, name)
+    if not path.exists():
+        available = [t.name for t in list_templates(root)]
+        avail_str = ", ".join(available) if available else "none"
+        raise FileNotFoundError(
+            f"Template '{name}' not found. Available: {avail_str}"
+        )
+    text = path.read_text()
+    if not text.startswith("---\n"):
+        raise ValueError(f"Template '{name}': missing frontmatter opening delimiter")
+    end_idx = text.index("---\n", 4)
+    fm_text = text[4:end_idx]
+    body = text[end_idx + 4:].strip()
+    fm = yaml.safe_load(fm_text)
+    return Template(
+        name=fm.get("name", name),
+        type=fm.get("type", "misc"),
+        priority=fm.get("priority", "none"),
+        labels=fm.get("labels") or [],
+        body=body,
+    )
+
+
+def list_templates(root: Path) -> list[Template]:
+    tdir = _templates_dir(root)
+    if not tdir.exists():
+        return []
+    templates = []
+    for p in sorted(tdir.glob("*.md")):
+        try:
+            t = load_template(root, p.stem)
+            templates.append(t)
+        except (ValueError, FileNotFoundError):
+            continue
+    return templates
+
+
+def delete_template(root: Path, name: str) -> None:
+    path = _template_path(root, name)
+    if not path.exists():
+        available = [t.name for t in list_templates(root)]
+        avail_str = ", ".join(available) if available else "none"
+        raise FileNotFoundError(
+            f"Template '{name}' not found. Available: {avail_str}"
+        )
+    path.unlink()
