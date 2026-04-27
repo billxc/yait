@@ -1,6 +1,6 @@
 # PRD: `--project` Flag for Cross-Folder Operation
 
-**Status:** Approved
+**Status:** Implemented
 **Version:** 0.7.0
 **Date:** 2026-04-27
 **Author:** yait-dev
