@@ -26,6 +26,7 @@ from .store import (
     save_doc, load_doc, list_docs, delete_doc, _docs_dir,
     add_link, remove_link,
     get_defaults, get_display, set_config_value, reset_config_value,
+    get_workflow, resolve_status_filter, validate_status,
     _DEFAULT_DEFAULTS, _DEFAULT_DISPLAY,
 )
 
@@ -162,7 +163,10 @@ def _require_init(root: Path) -> None:
         raise click.ClickException("Not a yait project. Run 'yait init' first.")
 
 
-def _status_color(status: str) -> str:
+def _status_color(status: str, root=None) -> str:
+    if root:
+        wf = get_workflow(root)
+        return "red" if status in set(wf["closed_statuses"]) else "green"
     return "green" if status == "open" else "red"
 
 
@@ -531,8 +535,7 @@ def new(ctx, title, title_opt, type, priority, label, assign, body, body_file, m
 @main.command(name="list")
 @click.option(
     "--status", default="open",
-    type=click.Choice(["open", "closed", "all"]),
-    help="Filter by status (default: open)",
+    help="Filter by status (open, closed, all, or specific status)",
 )
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--priority", default=None, type=click.Choice(PRIORITIES), help="Filter by priority")
@@ -560,8 +563,11 @@ def list_cmd(ctx, status, type, priority, label, assignee, milestone, as_json, s
     """
     root = _resolve(ctx)
     _require_init(root)
-    st = None if status == "all" else status
-    issues = list_issues(root, status=st, type=type, label=label, assignee=assignee, priority=priority, milestone=milestone)
+    try:
+        status_filter = resolve_status_filter(root, status)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    issues = list_issues(root, status_list=status_filter, type=type, label=label, assignee=assignee, priority=priority, milestone=milestone)
     if has_doc:
         issues = [i for i in issues if i.docs]
     if no_doc:
@@ -668,6 +674,47 @@ def show(ctx, id, as_json):
         click.echo(f"\n{issue.body}")
 
 
+# ── status ────────────────────────────────────────────────────
+
+
+@main.command(name="status")
+@click.argument("id", type=int)
+@click.argument("new_status", required=False, default=None)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def status_cmd(ctx, id, new_status, as_json):
+    """View or change issue status.
+
+    \b
+    Examples:
+      yait status 1              # show current status
+      yait status 1 in-progress  # change status
+      yait status 1 --json       # JSON output
+    """
+    root = _resolve(ctx)
+    _require_init(root)
+    issue = _load_or_exit(root, id)
+
+    if new_status is None:
+        if as_json:
+            click.echo(json.dumps({"id": id, "status": issue.status}))
+        else:
+            click.echo(f"Issue #{id}: {click.style(issue.status, fg=_status_color(issue.status, root))}")
+        return
+
+    try:
+        validate_status(root, new_status)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    with YaitLock(root, "status"):
+        issue.status = new_status
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Issue #{id} status → {new_status}")
+        _commit(ctx, root, f"yait: status #{id} -> {new_status}")
+
+
 # ── close ────────────────────────────────────────────────────
 
 @main.command()
@@ -677,13 +724,16 @@ def close(ctx, ids):
     """Close one or more issues."""
     root = _resolve(ctx)
     _require_init(root)
+    wf = get_workflow(root)
+    closed_status = wf["closed_statuses"][0]
+    closed_set = set(wf["closed_statuses"])
     with YaitLock(root, "close"):
         for id in ids:
             issue = _load_or_exit(root, id)
-            if issue.status == "closed":
+            if issue.status in closed_set:
                 click.echo(f"Issue #{id} is already closed.")
                 continue
-            issue.status = "closed"
+            issue.status = closed_status
             issue.updated_at = _now()
             save_issue(root, issue)
             click.echo(f"Closed issue #{id}: {issue.title}")
@@ -724,13 +774,17 @@ def reopen(ctx, ids):
     """Reopen one or more closed issues."""
     root = _resolve(ctx)
     _require_init(root)
+    wf = get_workflow(root)
+    closed_set = set(wf["closed_statuses"])
+    open_statuses = [s for s in wf["statuses"] if s not in closed_set]
+    open_status = open_statuses[0]
     with YaitLock(root, "reopen"):
         for id in ids:
             issue = _load_or_exit(root, id)
-            if issue.status == "open":
+            if issue.status not in closed_set:
                 click.echo(f"Issue #{id} is already open.")
                 continue
-            issue.status = "open"
+            issue.status = open_status
             issue.updated_at = _now()
             save_issue(root, issue)
             click.echo(f"Reopened issue #{id}: {issue.title}")
@@ -773,12 +827,13 @@ def comment(ctx, id, message, message_file):
 @click.option("--title", "-T", "new_title", default=None, help="New title")
 @click.option("--type", "-t", "new_type", default=None, type=click.Choice(ISSUE_TYPES), help="New type")
 @click.option("--priority", "-p", "new_priority", default=None, type=click.Choice(PRIORITIES), help="New priority")
+@click.option("--status", "-s", "new_status", default=None, help="New status")
 @click.option("--assign", "-a", "new_assign", default=None, help="New assignee")
 @click.option("--body", "-b", "new_body", default=None, help="New body (use '-' for stdin)")
 @click.option("--body-file", "new_body_file", default=None, help="Read new body from file")
 @click.option("--milestone", "-m", "new_milestone", default=None, help="New milestone")
 @click.pass_context
-def edit(ctx, id, new_title, new_type, new_priority, new_assign, new_body, new_body_file, new_milestone):
+def edit(ctx, id, new_title, new_type, new_priority, new_status, new_assign, new_body, new_body_file, new_milestone):
     """Edit an issue inline or in $EDITOR.
 
     \b
@@ -796,7 +851,7 @@ def edit(ctx, id, new_title, new_type, new_priority, new_assign, new_body, new_b
     if new_body is not None or new_body_file is not None:
         resolved_body = _read_body(new_body, new_body_file)
         new_body = resolved_body
-    if any(v is not None for v in (new_title, new_type, new_priority, new_assign, new_body, new_milestone)):
+    if any(v is not None for v in (new_title, new_type, new_priority, new_status, new_assign, new_body, new_milestone)):
         with YaitLock(root, "edit"):
             if new_title is not None:
                 issue.title = new_title
@@ -804,6 +859,12 @@ def edit(ctx, id, new_title, new_type, new_priority, new_assign, new_body, new_b
                 issue.type = new_type
             if new_priority is not None:
                 issue.priority = new_priority
+            if new_status is not None:
+                try:
+                    validate_status(root, new_status)
+                except ValueError as e:
+                    raise click.ClickException(str(e))
+                issue.status = new_status
             if new_assign is not None:
                 issue.assignee = new_assign or None
             if new_body is not None:
@@ -1249,8 +1310,7 @@ def template_delete(ctx, name):
 @click.argument("query", required=False, default=None)
 @click.option(
     "--status", default="open",
-    type=click.Choice(["open", "closed", "all"]),
-    help="Filter by status (default: open)",
+    help="Filter by status (open, closed, all, or specific status)",
 )
 @click.option("--type", default=None, type=click.Choice(ISSUE_TYPES), help="Filter by type")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
@@ -1280,8 +1340,11 @@ def search(ctx, query, status, type, as_json, label, priority, assignee, milesto
     """
     root = _resolve(ctx)
     _require_init(root)
-    st = None if status == "all" else status
-    issues = list_issues(root, status=st, type=type, label=label,
+    try:
+        status_filter = resolve_status_filter(root, status)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    issues = list_issues(root, status_list=status_filter, type=type, label=label,
                          priority=priority, assignee=assignee, milestone=milestone)
 
     # Build doc title cache for search matching
@@ -1344,20 +1407,28 @@ def _group_by_field(issues, field: str) -> dict[str, list]:
     return groups
 
 
-def _open_closed(issues) -> tuple[int, int]:
-    o = sum(1 for i in issues if i.status == "open")
-    c = sum(1 for i in issues if i.status == "closed")
+def _open_closed(issues, closed_set=None) -> tuple[int, int]:
+    if closed_set is None:
+        closed_set = {"closed"}
+    c = sum(1 for i in issues if i.status in closed_set)
+    o = len(issues) - c
     return o, c
 
 
-def _build_stats_data(all_issues) -> dict:
+def _build_stats_data(all_issues, root=None) -> dict:
     """Build the full stats data structure."""
     total = len(all_issues)
-    open_count = sum(1 for i in all_issues if i.status == "open")
-    closed_count = total - open_count
+    if root:
+        wf = get_workflow(root)
+        closed_set = set(wf["closed_statuses"])
+    else:
+        closed_set = {"closed"}
+    closed_count = sum(1 for i in all_issues if i.status in closed_set)
+    open_count = total - closed_count
 
     type_counts = Counter(i.type for i in all_issues)
     priority_counts = Counter(i.priority for i in all_issues)
+    status_counts = Counter(i.status for i in all_issues)
 
     label_counts: Counter[str] = Counter()
     for i in all_issues:
@@ -1367,14 +1438,14 @@ def _build_stats_data(all_issues) -> dict:
     milestone_groups = _group_by_field(all_issues, "milestone")
     milestone_data = {}
     for name, issues in sorted(milestone_groups.items(), key=lambda x: (x[0] == "(none)", x[0])):
-        o, c = _open_closed(issues)
+        o, c = _open_closed(issues, closed_set)
         pct = round(c / (o + c) * 100) if (o + c) else 0
         milestone_data[name] = {"open": o, "closed": c, "percent": pct}
 
     assignee_groups = _group_by_field(all_issues, "assignee")
     assignee_data = {}
     for name, issues in sorted(assignee_groups.items(), key=lambda x: (x[0] == "(none)", x[0])):
-        o, c = _open_closed(issues)
+        o, c = _open_closed(issues, closed_set)
         assignee_data[name] = {"open": o, "closed": c}
 
     return {
@@ -1386,6 +1457,7 @@ def _build_stats_data(all_issues) -> dict:
         "by_label": dict(label_counts.most_common()),
         "by_milestone": milestone_data,
         "by_assignee": assignee_data,
+        "by_status": dict(status_counts.most_common()),
     }
 
 
@@ -1402,7 +1474,7 @@ def _print_dimension(title: str, data: dict, show_percent: bool = False):
 
 @main.command()
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-@click.option("--by", "dimension", type=click.Choice(["type", "priority", "label", "milestone", "assignee"]),
+@click.option("--by", "dimension", type=click.Choice(["type", "priority", "label", "milestone", "assignee", "status"]),
               help="Show breakdown for a single dimension")
 @click.pass_context
 def stats(ctx, as_json, dimension):
@@ -1418,7 +1490,7 @@ def stats(ctx, as_json, dimension):
             click.echo("No issues.")
         return
 
-    data = _build_stats_data(all_issues)
+    data = _build_stats_data(all_issues, root=root)
 
     if as_json:
         if dimension:
@@ -1430,7 +1502,7 @@ def stats(ctx, as_json, dimension):
 
     if dimension:
         key = f"by_{dimension}"
-        if dimension in ("type", "priority", "label"):
+        if dimension in ("type", "priority", "label", "status"):
             vals = data[key]
             val_str = ", ".join(f"{k}={v}" for k, v in vals.items())
             click.echo(f"By {dimension}: {val_str}")
@@ -2027,10 +2099,17 @@ def _resolve_bulk_issues(root: Path, ids: tuple[int, ...], **filters) -> list[Is
         return result
 
     # Filter mode
-    status = filters.get("filter_status")
+    filter_status = filters.get("filter_status")
+    status_list = None
+    if filter_status:
+        try:
+            status_list = resolve_status_filter(root, filter_status)
+        except ValueError as e:
+            click.echo(f"Error: {e}")
+            return None
     issues = list_issues(
         root,
-        status=status,
+        status_list=status_list,
         type=filters.get("filter_type"),
         priority=filters.get("filter_priority"),
         label=filters.get("filter_label"),
@@ -2046,7 +2125,6 @@ def _resolve_bulk_issues(root: Path, ids: tuple[int, ...], **filters) -> list[Is
 def bulk_filter_options(f):
     """Decorator that adds --filter-* options to a bulk command."""
     f = click.option("--filter-status", default=None,
-                     type=click.Choice(["open", "closed"]),
                      help="Filter by status")(f)
     f = click.option("--filter-type", default=None,
                      type=click.Choice(ISSUE_TYPES),
@@ -2351,6 +2429,47 @@ def bulk_type(ctx, value, ids, filter_status, filter_type, filter_priority,
     _bulk_summary(updated, failed)
 
 
+@bulk.command(name="status")
+@click.argument("new_status")
+@click.argument("ids", nargs=-1, type=int)
+@bulk_filter_options
+@click.pass_context
+def bulk_status(ctx, new_status, ids, filter_status, filter_type, filter_priority,
+                filter_label, filter_assignee, filter_milestone):
+    """Set status on multiple issues.
+
+    \b
+    Examples:
+      yait bulk status done 1 2 3
+      yait bulk status in-progress --filter-type bug --filter-status open
+    """
+    root = _resolve(ctx)
+    _require_init(root)
+    try:
+        validate_status(root, new_status)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    pairs = _resolve_bulk_issues(root, ids,
+        filter_status=filter_status, filter_type=filter_type,
+        filter_priority=filter_priority, filter_label=filter_label,
+        filter_assignee=filter_assignee, filter_milestone=filter_milestone)
+    if pairs is None:
+        return
+    updated = 0
+    failed = 0
+    with YaitLock(root, "bulk status"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            issue.status = new_status
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            _commit(ctx, root, f"yait: bulk status #{issue_id} -> {new_status}")
+            updated += 1
+    _bulk_summary(updated, failed)
+
+
 # ── project ──────────────────────────────────────────────────
 
 @main.group()
@@ -2395,8 +2514,10 @@ def project_list(as_json):
         if not p.is_dir() or not is_initialized(p):
             continue
         all_issues = list_issues(p, status=None)
-        open_c = sum(1 for i in all_issues if i.status == "open")
-        closed_c = sum(1 for i in all_issues if i.status == "closed")
+        wf = get_workflow(p)
+        closed_set = set(wf["closed_statuses"])
+        closed_c = sum(1 for i in all_issues if i.status in closed_set)
+        open_c = len(all_issues) - closed_c
         # Get last updated time from most recent issue
         updated = ""
         if all_issues:
