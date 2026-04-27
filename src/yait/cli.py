@@ -25,7 +25,7 @@ from .store import (
     save_template, load_template, list_templates, delete_template,
     save_doc, load_doc, list_docs, delete_doc, _docs_dir,
     add_link, remove_link,
-    get_defaults, get_display, get_config_value, set_config_value, reset_config_value,
+    get_defaults, get_display, set_config_value, reset_config_value,
     _DEFAULT_DEFAULTS, _DEFAULT_DISPLAY,
 )
 
@@ -70,7 +70,7 @@ def _resolve(ctx) -> Path:
         return ctx.obj["data_dir"]
 
     project = ctx.obj.get("project")
-    yait_home = Path(os.environ.get("YAIT_HOME", "~/.yait")).expanduser()
+    yait_home = _yait_home()
 
     name = project or os.environ.get("YAIT_PROJECT")
     if name:
@@ -446,7 +446,7 @@ def config_reset(ctx, key):
 
 @main.command(context_settings=dict(ignore_unknown_options=True))
 @click.argument("title", required=False, default=None)
-@click.option("--title", "title_opt", default=None, help="Issue title")
+@click.option("--title", "-T", "title_opt", default=None, help="Issue title")
 @click.option("--type", "-t", "type", default=None, type=click.Choice(ISSUE_TYPES), help="Issue type (default: misc)")
 @click.option("--priority", "-p", default=None, type=click.Choice(PRIORITIES), help="Priority (default: none)")
 @click.option("--label", "-l", multiple=True, help="Add label (repeatable)")

@@ -624,3 +624,54 @@ def test_template_with_empty_body(initialized_root: Path):
     save_template(initialized_root, Template(name="minimal", type="misc"))
     loaded = load_template(initialized_root, "minimal")
     assert loaded.body == ""
+
+
+# ---------------------------------------------------------------------------
+# Refactoring verification: dead code removal
+# ---------------------------------------------------------------------------
+
+
+def test_yait_root_function_removed():
+    """_yait_root should no longer exist in store module."""
+    import yait.store as store_mod
+    assert not hasattr(store_mod, "_yait_root")
+
+
+def test_yait_dir_constant_removed():
+    """YAIT_DIR constant should no longer exist in store module."""
+    import yait.store as store_mod
+    assert not hasattr(store_mod, "YAIT_DIR")
+
+
+def test_issues_dir_uses_root_directly(initialized_root: Path):
+    """_issues_dir returns root / 'issues' without indirection."""
+    from yait.store import _issues_dir
+    assert _issues_dir(initialized_root) == initialized_root / "issues"
+
+
+def test_templates_dir_uses_root_directly(initialized_root: Path):
+    """_templates_dir returns root / 'templates' without indirection."""
+    from yait.store import _templates_dir
+    assert _templates_dir(initialized_root) == initialized_root / "templates"
+
+
+def test_docs_dir_uses_root_directly(initialized_root: Path):
+    """_docs_dir returns root / 'docs' without indirection."""
+    from yait.store import _docs_dir
+    assert _docs_dir(initialized_root) == initialized_root / "docs"
+
+
+def test_config_path_uses_root_directly(initialized_root: Path):
+    """_config_path returns root / 'config.yaml' without indirection."""
+    from yait.store import _config_path
+    assert _config_path(initialized_root) == initialized_root / "config.yaml"
+
+
+def test_issue_path_no_isdigit_check(initialized_root: Path):
+    """_issue_path should directly format the id without isdigit validation."""
+    from yait.store import _issue_path
+    # Positive int works
+    assert _issue_path(initialized_root, 42) == initialized_root / "issues" / "42.md"
+    # Negative int rejected
+    with pytest.raises(ValueError, match="Invalid issue ID"):
+        _issue_path(initialized_root, -1)

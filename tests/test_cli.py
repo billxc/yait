@@ -76,6 +76,16 @@ class TestNew:
         issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "misc"
 
+    def test_new_with_short_title_flag(self, runner: CliRunner, initialized_cli):
+        """new -T should work as shorthand for --title."""
+        result = runner.invoke(
+            main, ["new", "-T", "Short flag title"], catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        assert "#1" in result.output
+        issue = load_issue(initialized_cli / ".yait", 1)
+        assert issue.title == "Short flag title"
+
 
 class TestList:
     def test_list_shows_issues(self, runner: CliRunner, initialized_cli):
