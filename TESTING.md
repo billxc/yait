@@ -3,7 +3,7 @@
 ## Environment Setup
 
 ```bash
-cd yet-another-issue-tracker
+cd yait
 
 # Install with test dependencies
 uv sync --group test
