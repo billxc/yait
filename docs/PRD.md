@@ -372,11 +372,6 @@ yet-another-issue-tracker/
 - Config enhancement: `yait config/config set/config reset` with defaults and display settings
 - Output formatting: compact/wide modes, auto-detect terminal width, title truncation
 
-### Future
-
-- Web UI
-- Performance optimization (indexing for 1000+ issues)
-
 ### v0.6 — Concurrency Safety ✅
 
 - Global lockfile (`.yait/yait.lock`) for concurrent write protection
@@ -393,6 +388,11 @@ yet-another-issue-tracker/
 - Full backward compatibility — local `.yait/` in cwd still works unchanged
 - `yait -P <name> init` delegates to `project create`
 - 440 automated tests (46 new for project features)
+
+### Future
+
+- Web UI
+- Performance optimization (indexing for 1000+ issues)
 
 ---
 
