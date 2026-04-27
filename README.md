@@ -91,9 +91,20 @@ yait project import myapp
 | **Output Formats** | `--compact`, `--wide`, auto-detect terminal width, `--json` |
 | **Import/Export** | `export --format json/csv`, `import` from JSON |
 | **History** | `log` — git-based change history per issue |
+| **Dashboard** | `dashboard` — generate local HTML dashboard with summary cards, charts, and issue tables |
 | **Concurrency** | Multi-process safe via `yait.lock` global lock on all write ops; auto-recovers from crashes (PID check + 60s timeout) |
 
 详细命令参考见 [docs/PRD.md](docs/PRD.md)。
+
+## Dashboard
+
+Generate a local HTML dashboard to view project status:
+
+```bash
+yait dashboard              # Generate and open in browser
+yait dashboard --no-open    # Generate without opening
+yait dashboard -o report.html  # Custom output path
+```
 
 ## Environment Variables
 
