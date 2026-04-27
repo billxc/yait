@@ -30,7 +30,7 @@ _DEFAULT_DISPLAY = {
 
 
 def _yait_root(root: Path) -> Path:
-    return root / YAIT_DIR
+    return root
 
 
 def _issues_dir(root: Path) -> Path:
@@ -65,7 +65,7 @@ def is_initialized(root: Path) -> bool:
 def _read_config(root: Path) -> dict:
     data = yaml.safe_load(_config_path(root).read_text())
     if not isinstance(data, dict):
-        raise ValueError(".yait/config.yaml is corrupted or empty")
+        raise ValueError("config.yaml is corrupted or empty")
     return data
 
 

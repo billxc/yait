@@ -33,7 +33,7 @@ class TestDocCreate:
         )
         assert result.exit_code == 0
         assert "Created doc 'auth-prd'" in result.output
-        doc = load_doc(initialized_cli, "auth-prd")
+        doc = load_doc(initialized_cli / ".yait", "auth-prd")
         assert doc.title == "Auth PRD"
         assert doc.body == "Hello"
 
@@ -45,7 +45,7 @@ class TestDocCreate:
             catch_exceptions=False,
         )
         assert result.exit_code == 0
-        doc = load_doc(initialized_cli, "spec")
+        doc = load_doc(initialized_cli / ".yait", "spec")
         assert doc.body == "Content from file"
 
     def test_create_slug_with_slash_fails(self, runner: CliRunner, initialized_cli):
@@ -158,7 +158,7 @@ class TestDocEdit:
         )
         assert result.exit_code == 0
         assert "Updated doc 'auth-prd'" in result.output
-        doc = load_doc(initialized_cli, "auth-prd")
+        doc = load_doc(initialized_cli / ".yait", "auth-prd")
         assert doc.title == "New Title"
 
     def test_edit_body(self, runner: CliRunner, initialized_cli):
@@ -171,7 +171,7 @@ class TestDocEdit:
             catch_exceptions=False,
         )
         assert result.exit_code == 0
-        doc = load_doc(initialized_cli, "auth-prd")
+        doc = load_doc(initialized_cli / ".yait", "auth-prd")
         assert doc.body == "new body"
 
     def test_edit_not_found(self, runner: CliRunner, initialized_cli):
@@ -195,7 +195,7 @@ class TestDocDelete:
         )
         assert result.exit_code == 0
         assert "Deleted doc 'auth-prd'" in result.output
-        assert list_docs(initialized_cli) == []
+        assert list_docs(initialized_cli / ".yait") == []
 
     def test_delete_with_linked_issues_warns(self, runner: CliRunner, initialized_cli):
         runner.invoke(
@@ -232,7 +232,7 @@ class TestDocLink:
         )
         assert result.exit_code == 0
         assert "Linked doc 'auth-prd' to issue #1" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "auth-prd" in issue.docs
 
     def test_link_external_path(self, runner: CliRunner, initialized_cli):
@@ -243,7 +243,7 @@ class TestDocLink:
         )
         assert result.exit_code == 0
         assert "Linked doc 'docs/arch.md' to issue #1" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "docs/arch.md" in issue.docs
 
     def test_link_multiple_issues(self, runner: CliRunner, initialized_cli):
@@ -257,7 +257,7 @@ class TestDocLink:
         assert result.exit_code == 0
         assert "Linked doc 'auth-prd' to issues #1, #2, #3" in result.output
         for i in range(1, 4):
-            assert "auth-prd" in load_issue(initialized_cli, i).docs
+            assert "auth-prd" in load_issue(initialized_cli / ".yait", i).docs
 
     def test_link_duplicate_skipped(self, runner: CliRunner, initialized_cli):
         runner.invoke(main, ["new", "Issue 1"], catch_exceptions=False)
@@ -268,7 +268,7 @@ class TestDocLink:
         )
         assert result.exit_code == 0
         assert "already linked" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.docs.count("auth-prd") == 1
 
 
@@ -282,7 +282,7 @@ class TestDocUnlink:
         )
         assert result.exit_code == 0
         assert "Unlinked doc 'auth-prd' from issue #1" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "auth-prd" not in issue.docs
 
     def test_unlink_not_linked(self, runner: CliRunner, initialized_cli):

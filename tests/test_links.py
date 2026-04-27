@@ -60,7 +60,7 @@ class TestSaveLoadLinks:
         issue = Issue(id=1, title="old issue")
         save_issue(initialized_root, issue)
         # Manually strip links from frontmatter to simulate old data
-        path = initialized_root / ".yait" / "issues" / "1.md"
+        path = initialized_root / "issues" / "1.md"
         text = path.read_text()
         text = "\n".join(
             line for line in text.splitlines() if not line.startswith("links:")

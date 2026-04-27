@@ -17,7 +17,7 @@ from yait.store import init_store
 
 
 def _lock_path(root: Path) -> Path:
-    return root / ".yait" / "yait.lock"
+    return root / "yait.lock"
 
 
 def _worker_acquire_lock(root_str: str, hold_seconds: float, result_queue):

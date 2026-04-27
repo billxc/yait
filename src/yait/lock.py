@@ -29,7 +29,7 @@ class YaitLock:
         timeout: float = 30.0,
         stale_timeout: float = 60.0,
     ) -> None:
-        self.lock_path = root / ".yait" / "yait.lock"
+        self.lock_path = root / "yait.lock"
         self.command = command
         self.timeout = timeout
         self.stale_timeout = stale_timeout

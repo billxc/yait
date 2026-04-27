@@ -175,7 +175,7 @@ class TestTitleTruncationInTable:
         assert "A" * 80 not in result.output
 
     def test_custom_max_title_width(self, runner, initialized_cli):
-        set_config_value(initialized_cli, "display.max_title_width", "20")
+        set_config_value(initialized_cli / ".yait", "display.max_title_width", "20")
         long_title = "B" * 40
         runner.invoke(main, ["new", "--title", long_title], catch_exceptions=False)
         result = runner.invoke(main, ["list", "--compact"], catch_exceptions=False)
@@ -200,7 +200,7 @@ class TestDateFormatInWide:
         assert "202" in result.output  # year prefix
 
     def test_full_date_format(self, runner, populated_cli):
-        set_config_value(populated_cli, "display.date_format", "full")
+        set_config_value(populated_cli / ".yait", "display.date_format", "full")
         result = runner.invoke(main, ["list", "--wide"], catch_exceptions=False)
         assert result.exit_code == 0
         # Full format includes time: YYYY-MM-DDTHH:MM:SS

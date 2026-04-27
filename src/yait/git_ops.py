@@ -35,19 +35,19 @@ def git_log(root: Path, path: str, limit: int = 10) -> str:
         return ""
 
 
-def git_commit(root: Path, message: str) -> None:
-    """Stage .yait/ and commit. No-op if not a git repo or nothing changed."""
-    if not is_git_repo(root):
+def git_commit(git_root: Path, message: str, stage_path: str = ".yait") -> None:
+    """Stage files and commit. No-op if not a git repo or nothing changed."""
+    if not is_git_repo(git_root):
         return
-    yait_dir = root / ".yait"
-    if yait_dir.exists():
-        git_run(root, "add", ".yait")
+    target = git_root / stage_path
+    if target.exists():
+        git_run(git_root, "add", stage_path)
     # Check if there is anything staged
     result = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
-        cwd=root,
+        cwd=git_root,
         capture_output=True,
     )
     if result.returncode == 0:
         return
-    git_run(root, "commit", "-m", message)
+    git_run(git_root, "commit", "-m", message)

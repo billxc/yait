@@ -32,6 +32,7 @@ def yait_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def initialized_root(yait_root: Path) -> Path:
-    """yait_root with init_store already called."""
-    init_store(yait_root)
-    return yait_root
+    """yait_root with init_store already called. Returns the data dir (.yait/)."""
+    data_dir = yait_root / ".yait"
+    init_store(data_dir)
+    return data_dir

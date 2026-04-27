@@ -21,8 +21,9 @@ from yait.store import (
 
 def test_init_store(yait_root: Path):
     """init_store creates the expected directory structure."""
-    init_store(yait_root)
-    assert is_initialized(yait_root)
+    data_dir = yait_root / ".yait"
+    init_store(data_dir)
+    assert is_initialized(data_dir)
     assert (yait_root / ".yait").is_dir()
     assert (yait_root / ".yait" / "issues").is_dir()
     assert (yait_root / ".yait" / "config.yaml").exists()
@@ -30,9 +31,10 @@ def test_init_store(yait_root: Path):
 
 def test_init_store_idempotent(yait_root: Path):
     """Calling init_store twice is idempotent — no error."""
-    init_store(yait_root)
-    init_store(yait_root)
-    assert is_initialized(yait_root)
+    data_dir = yait_root / ".yait"
+    init_store(data_dir)
+    init_store(data_dir)
+    assert is_initialized(data_dir)
 
 
 def test_is_initialized_false(tmp_path: Path):
@@ -74,7 +76,7 @@ def test_save_issue_preserves_frontmatter(initialized_root: Path):
         assignee="alice",
     )
     save_issue(initialized_root, issue)
-    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file = initialized_root / "issues" / "1.md"
     content = issue_file.read_text()
     assert content.startswith("---\n")
     parts = content.split("---\n", 2)
@@ -224,7 +226,7 @@ def test_save_and_load_issue_with_type(initialized_root: Path):
 def test_load_issue_missing_type_defaults_to_misc(initialized_root: Path):
     """Loading an issue file without a type field defaults to misc."""
     # Manually write an issue file without the type field
-    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file = initialized_root / "issues" / "1.md"
     issue_file.write_text(
         "---\n"
         "id: 1\n"
@@ -258,7 +260,7 @@ def test_save_issue_type_in_frontmatter(initialized_root: Path):
     """Saved issue file has type in YAML frontmatter."""
     issue = Issue(id=1, title="typed", type="enhancement")
     save_issue(initialized_root, issue)
-    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file = initialized_root / "issues" / "1.md"
     content = issue_file.read_text()
     parts = content.split("---\n", 2)
     fm = yaml.safe_load(parts[1])
@@ -340,7 +342,7 @@ def test_save_and_load_issue_with_priority(initialized_root: Path):
 
 def test_load_issue_missing_priority_defaults_to_none(initialized_root: Path):
     """Loading an issue file without a priority field defaults to none."""
-    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file = initialized_root / "issues" / "1.md"
     issue_file.write_text(
         "---\n"
         "id: 1\n"
@@ -375,7 +377,7 @@ def test_list_issues_skips_non_numeric_md(initialized_root: Path):
     """list_issues ignores .md files with non-numeric names."""
     save_issue(initialized_root, Issue(id=1, title="Real issue"))
     # Create a non-numeric .md file in issues dir
-    bogus = initialized_root / ".yait" / "issues" / "README.md"
+    bogus = initialized_root / "issues" / "README.md"
     bogus.write_text("This is not an issue file")
     issues = list_issues(initialized_root)
     assert len(issues) == 1
@@ -384,7 +386,7 @@ def test_list_issues_skips_non_numeric_md(initialized_root: Path):
 
 def test_read_config_corrupted(initialized_root: Path):
     """_read_config raises ValueError on corrupted config."""
-    cfg = initialized_root / ".yait" / "config.yaml"
+    cfg = initialized_root / "config.yaml"
     cfg.write_text("")
     with pytest.raises(ValueError, match="corrupted or empty"):
         _read_config(initialized_root)
@@ -504,7 +506,7 @@ def test_save_milestone_invalid_due_date(initialized_root: Path):
 
 def test_backward_compat_no_milestones_field(initialized_root: Path):
     """Old config without milestones field works (defaults to empty dict)."""
-    cfg_path = initialized_root / ".yait" / "config.yaml"
+    cfg_path = initialized_root / "config.yaml"
     cfg = yaml.safe_load(cfg_path.read_text())
     cfg.pop("milestones", None)
     cfg_path.write_text(yaml.dump(cfg, default_flow_style=False))
@@ -516,7 +518,7 @@ def test_backward_compat_no_milestones_field(initialized_root: Path):
 def test_milestone_persisted_in_config_yaml(initialized_root: Path):
     """Milestone data is stored in config.yaml milestones section."""
     save_milestone(initialized_root, Milestone(name="v1.0", description="test"))
-    cfg = yaml.safe_load((initialized_root / ".yait" / "config.yaml").read_text())
+    cfg = yaml.safe_load((initialized_root / "config.yaml").read_text())
     assert "milestones" in cfg
     assert "v1.0" in cfg["milestones"]
     assert cfg["milestones"]["v1.0"]["description"] == "test"
@@ -532,7 +534,8 @@ from yait.store import save_template, load_template, list_templates, delete_temp
 
 def test_init_store_creates_templates_dir(yait_root: Path):
     """init_store creates .yait/templates/ directory."""
-    init_store(yait_root)
+    data_dir = yait_root / ".yait"
+    init_store(data_dir)
     assert (yait_root / ".yait" / "templates").is_dir()
 
 
@@ -558,7 +561,7 @@ def test_save_template_file_format(initialized_root: Path):
     """Template is saved as .md with YAML frontmatter."""
     tmpl = Template(name="feat", type="feature", priority="p2", labels=["ui"])
     save_template(initialized_root, tmpl)
-    path = initialized_root / ".yait" / "templates" / "feat.md"
+    path = initialized_root / "templates" / "feat.md"
     assert path.exists()
     text = path.read_text()
     assert text.startswith("---\n")

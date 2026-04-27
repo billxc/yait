@@ -15,7 +15,8 @@ from yait.store import (
 
 
 def test_init_creates_docs_dir(yait_root: Path):
-    init_store(yait_root)
+    data_dir = yait_root / ".yait"
+    init_store(data_dir)
     assert (yait_root / ".yait" / "docs").is_dir()
 
 
@@ -82,7 +83,7 @@ def test_issue_docs_default_empty(initialized_root: Path):
 
 def test_old_issue_without_docs_field(initialized_root: Path):
     """Old issue files without docs field default to []."""
-    issue_file = initialized_root / ".yait" / "issues" / "1.md"
+    issue_file = initialized_root / "issues" / "1.md"
     issue_file.write_text(
         "---\n"
         "id: 1\n"

@@ -51,7 +51,7 @@ class TestNew:
             catch_exceptions=False,
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.labels == ["bug", "urgent"]
         assert issue.assignee == "alice"
         assert issue.body == "body text"
@@ -65,7 +65,7 @@ class TestNew:
             main, ["new", "--title", "A bug", "--type", "bug"], catch_exceptions=False
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "bug"
 
     def test_new_default_type(self, runner: CliRunner, initialized_cli):
@@ -73,7 +73,7 @@ class TestNew:
             main, ["new", "--title", "Something"], catch_exceptions=False
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "misc"
 
 
@@ -145,12 +145,12 @@ class TestCloseReopen:
         result = runner.invoke(main, ["close", "1"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Closed" in result.output
-        assert load_issue(initialized_cli, 1).status == "closed"
+        assert load_issue(initialized_cli / ".yait", 1).status == "closed"
 
         result = runner.invoke(main, ["reopen", "1"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Reopened" in result.output
-        assert load_issue(initialized_cli, 1).status == "open"
+        assert load_issue(initialized_cli / ".yait", 1).status == "open"
 
 
 class TestComment:
@@ -161,7 +161,7 @@ class TestComment:
         )
         assert result.exit_code == 0
         assert "comment" in result.output.lower()
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "This is a note" in issue.body
 
 
@@ -170,7 +170,7 @@ class TestLabel:
         runner.invoke(main, ["new", "--title", "Needs labels"], catch_exceptions=False)
         result = runner.invoke(main, ["label", "add", "1", "bug"], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "bug" in issue.labels
 
     def test_label_remove(self, runner: CliRunner, initialized_cli):
@@ -179,7 +179,7 @@ class TestLabel:
         )
         result = runner.invoke(main, ["label", "remove", "1", "bug"], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "bug" not in issue.labels
 
     def test_label_add_duplicate(self, runner: CliRunner, initialized_cli):
@@ -188,7 +188,7 @@ class TestLabel:
         result = runner.invoke(main, ["label", "add", "1", "bug"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "already" in result.output.lower()
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.labels.count("bug") == 1
 
 
@@ -232,9 +232,9 @@ class TestCloseMultiple:
         assert "Closed issue #1" in result.output
         assert "Closed issue #2" in result.output
         assert "Closed issue #3" in result.output
-        assert load_issue(initialized_cli, 1).status == "closed"
-        assert load_issue(initialized_cli, 2).status == "closed"
-        assert load_issue(initialized_cli, 3).status == "closed"
+        assert load_issue(initialized_cli / ".yait", 1).status == "closed"
+        assert load_issue(initialized_cli / ".yait", 2).status == "closed"
+        assert load_issue(initialized_cli / ".yait", 3).status == "closed"
 
 
 class TestReopenMultiple:
@@ -247,8 +247,8 @@ class TestReopenMultiple:
         assert result.exit_code == 0
         assert "Reopened issue #1" in result.output
         assert "Reopened issue #2" in result.output
-        assert load_issue(initialized_cli, 1).status == "open"
-        assert load_issue(initialized_cli, 2).status == "open"
+        assert load_issue(initialized_cli / ".yait", 1).status == "open"
+        assert load_issue(initialized_cli / ".yait", 2).status == "open"
 
 
 class TestListJson:
@@ -416,13 +416,13 @@ class TestPositionalTitle:
         result = runner.invoke(main, ["new", "Fix bug"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "#1" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.title == "Fix bug"
 
     def test_new_option_title_compat(self, runner: CliRunner, initialized_cli):
         result = runner.invoke(main, ["new", "--title", "Option title"], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.title == "Option title"
 
     def test_new_no_title_fails(self, runner: CliRunner, initialized_cli):
@@ -436,7 +436,7 @@ class TestAssignUnassign:
         result = runner.invoke(main, ["assign", "1", "alice"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Assigned" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.assignee == "alice"
 
     def test_unassign(self, runner: CliRunner, initialized_cli):
@@ -444,7 +444,7 @@ class TestAssignUnassign:
         result = runner.invoke(main, ["unassign", "1"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Unassigned" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.assignee is None
 
 
@@ -454,14 +454,14 @@ class TestInlineEdit:
         result = runner.invoke(main, ["edit", "1", "-T", "New title"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated" in result.output
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.title == "New title"
 
     def test_edit_inline_type(self, runner: CliRunner, initialized_cli):
         runner.invoke(main, ["new", "--title", "Test"], catch_exceptions=False)
         result = runner.invoke(main, ["edit", "1", "-t", "bug"], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "bug"
 
 
@@ -634,7 +634,7 @@ class TestBodyFile:
             main, ["new", "file test", "--body-file", str(body_file)], catch_exceptions=False
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.body == "Body from file"
 
     def test_body_from_stdin(self, runner: CliRunner, initialized_cli):
@@ -642,7 +642,7 @@ class TestBodyFile:
             main, ["new", "stdin test", "--body", "-"], input="Body from stdin\n", catch_exceptions=False
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.body == "Body from stdin"
 
     def test_body_and_body_file_conflict(self, runner: CliRunner, initialized_cli, tmp_path):
@@ -662,7 +662,7 @@ class TestBodyFile:
             main, ["comment", "1", "--message-file", str(msg_file)], catch_exceptions=False
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "Comment from file" in issue.body
 
     def test_comment_from_stdin(self, runner: CliRunner, initialized_cli):
@@ -671,7 +671,7 @@ class TestBodyFile:
             main, ["comment", "1", "-m", "-"], input="Comment from stdin\n", catch_exceptions=False
         )
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert "Comment from stdin" in issue.body
 
     def test_message_and_message_file_conflict(self, runner: CliRunner, initialized_cli, tmp_path):
@@ -739,7 +739,7 @@ class TestImport:
         result = runner.invoke(main, ["import", str(import_file)], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Imported 2" in result.output
-        issue = load_issue(new_root, 1)
+        issue = load_issue(new_root / ".yait", 1)
         assert issue.title == "Issue 1"
 
     def test_import_skip_duplicates(self, runner: CliRunner, initialized_cli, tmp_path):
@@ -772,7 +772,7 @@ class TestMilestoneCreate:
         )
         assert result.exit_code == 0
         assert "Created milestone 'v1.0'" in result.output
-        m = load_milestone(initialized_cli, "v1.0")
+        m = load_milestone(initialized_cli / ".yait", "v1.0")
         assert m.description == "First release"
         assert m.due_date == "2026-06-01"
 
@@ -781,7 +781,7 @@ class TestMilestoneCreate:
             main, ["milestone", "create", "v2.0"], catch_exceptions=False,
         )
         assert result.exit_code == 0
-        m = load_milestone(initialized_cli, "v2.0")
+        m = load_milestone(initialized_cli / ".yait", "v2.0")
         assert m.status == "open"
         assert m.description == ""
 
@@ -888,7 +888,7 @@ class TestMilestoneClose:
         result = runner.invoke(main, ["milestone", "close", "v1.0"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Closed milestone" in result.output
-        m = load_milestone(initialized_cli, "v1.0")
+        m = load_milestone(initialized_cli / ".yait", "v1.0")
         assert m.status == "closed"
 
     def test_close_already_closed(self, runner: CliRunner, initialized_cli):
@@ -911,7 +911,7 @@ class TestMilestoneReopen:
         result = runner.invoke(main, ["milestone", "reopen", "v1.0"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Reopened milestone" in result.output
-        m = load_milestone(initialized_cli, "v1.0")
+        m = load_milestone(initialized_cli / ".yait", "v1.0")
         assert m.status == "open"
 
     def test_reopen_already_open(self, runner: CliRunner, initialized_cli):
@@ -935,7 +935,7 @@ class TestMilestoneEdit:
         )
         assert result.exit_code == 0
         assert "Updated milestone" in result.output
-        m = load_milestone(initialized_cli, "v1.0")
+        m = load_milestone(initialized_cli / ".yait", "v1.0")
         assert m.description == "Updated"
 
     def test_edit_due(self, runner: CliRunner, initialized_cli):
@@ -945,7 +945,7 @@ class TestMilestoneEdit:
             catch_exceptions=False,
         )
         assert result.exit_code == 0
-        m = load_milestone(initialized_cli, "v1.0")
+        m = load_milestone(initialized_cli / ".yait", "v1.0")
         assert m.due_date == "2026-07-01"
 
     def test_edit_nothing(self, runner: CliRunner, initialized_cli):
@@ -978,7 +978,7 @@ class TestMilestoneDelete:
         result = runner.invoke(main, ["milestone", "delete", "v1.0"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Deleted milestone" in result.output
-        assert list_milestones(initialized_cli) == []
+        assert list_milestones(initialized_cli / ".yait") == []
 
     def test_delete_with_refs_fails(self, runner: CliRunner, initialized_cli):
         runner.invoke(main, ["milestone", "create", "v1.0"], catch_exceptions=False)
@@ -994,8 +994,8 @@ class TestMilestoneDelete:
         result = runner.invoke(main, ["milestone", "delete", "v1.0", "--force"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Deleted milestone" in result.output
-        assert list_milestones(initialized_cli) == []
-        issue = load_issue(initialized_cli, 1)
+        assert list_milestones(initialized_cli / ".yait") == []
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.milestone is None
 
     def test_delete_not_found(self, runner: CliRunner, initialized_cli):
@@ -1019,7 +1019,7 @@ class TestBulkLabelAdd:
         assert result.exit_code == 0
         assert "Updated 3 issues. Failed: 0." in result.output
         for i in range(1, 4):
-            assert "urgent" in load_issue(initialized_cli, i).labels
+            assert "urgent" in load_issue(initialized_cli / ".yait", i).labels
 
     def test_skip_duplicate(self, runner: CliRunner, initialized_cli):
         runner.invoke(main, ["new", "Test", "-l", "urgent"], catch_exceptions=False)
@@ -1027,14 +1027,14 @@ class TestBulkLabelAdd:
         assert result.exit_code == 0
         assert "already" in result.output
         assert "Updated 0 issues. Failed: 0." in result.output
-        assert load_issue(initialized_cli, 1).labels.count("urgent") == 1
+        assert load_issue(initialized_cli / ".yait", 1).labels.count("urgent") == 1
 
     def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
         _create_issues(runner, 1)
         result = runner.invoke(main, ["bulk", "label", "add", "urgent", "1", "999"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 1 issues. Failed: 1." in result.output
-        assert "urgent" in load_issue(initialized_cli, 1).labels
+        assert "urgent" in load_issue(initialized_cli / ".yait", 1).labels
 
 
 class TestBulkLabelRemove:
@@ -1045,7 +1045,7 @@ class TestBulkLabelRemove:
         assert result.exit_code == 0
         assert "Updated 2 issues. Failed: 0." in result.output
         for i in range(1, 3):
-            assert "urgent" not in load_issue(initialized_cli, i).labels
+            assert "urgent" not in load_issue(initialized_cli / ".yait", i).labels
 
     def test_skip_missing_label(self, runner: CliRunner, initialized_cli):
         _create_issues(runner, 1)
@@ -1067,7 +1067,7 @@ class TestBulkAssign:
         assert result.exit_code == 0
         assert "Updated 3 issues. Failed: 0." in result.output
         for i in range(1, 4):
-            assert load_issue(initialized_cli, i).assignee == "alice"
+            assert load_issue(initialized_cli / ".yait", i).assignee == "alice"
 
     def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
         _create_issues(runner, 1)
@@ -1083,7 +1083,7 @@ class TestBulkUnassign:
         assert result.exit_code == 0
         assert "Updated 2 issues. Failed: 0." in result.output
         for i in range(1, 3):
-            assert load_issue(initialized_cli, i).assignee is None
+            assert load_issue(initialized_cli / ".yait", i).assignee is None
 
     def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
         result = runner.invoke(main, ["bulk", "unassign", "999"], catch_exceptions=False)
@@ -1097,7 +1097,7 @@ class TestBulkPriority:
         assert result.exit_code == 0
         assert "Updated 2 issues. Failed: 0." in result.output
         for i in range(1, 3):
-            assert load_issue(initialized_cli, i).priority == "p0"
+            assert load_issue(initialized_cli / ".yait", i).priority == "p0"
 
     def test_invalid_priority(self, runner: CliRunner, initialized_cli):
         _create_issues(runner, 1)
@@ -1116,7 +1116,7 @@ class TestBulkMilestone:
         assert result.exit_code == 0
         assert "Updated 2 issues. Failed: 0." in result.output
         for i in range(1, 3):
-            assert load_issue(initialized_cli, i).milestone == "v1.0"
+            assert load_issue(initialized_cli / ".yait", i).milestone == "v1.0"
 
     def test_nonexistent_id(self, runner: CliRunner, initialized_cli):
         result = runner.invoke(main, ["bulk", "milestone", "v2.0", "999"], catch_exceptions=False)
@@ -1130,7 +1130,7 @@ class TestBulkType:
         assert result.exit_code == 0
         assert "Updated 2 issues. Failed: 0." in result.output
         for i in range(1, 3):
-            assert load_issue(initialized_cli, i).type == "bug"
+            assert load_issue(initialized_cli / ".yait", i).type == "bug"
 
     def test_invalid_type(self, runner: CliRunner, initialized_cli):
         _create_issues(runner, 1)
@@ -1163,9 +1163,9 @@ class TestBulkFilterLabelAdd:
         ], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 2 issues." in result.output
-        assert "release-blocker" in load_issue(initialized_cli, 1).labels
-        assert "release-blocker" in load_issue(initialized_cli, 2).labels
-        assert "release-blocker" not in load_issue(initialized_cli, 3).labels
+        assert "release-blocker" in load_issue(initialized_cli / ".yait", 1).labels
+        assert "release-blocker" in load_issue(initialized_cli / ".yait", 2).labels
+        assert "release-blocker" not in load_issue(initialized_cli / ".yait", 3).labels
 
     def test_filter_by_priority_and_status(self, runner: CliRunner, initialized_cli):
         _create_typed_issues(runner)
@@ -1175,7 +1175,7 @@ class TestBulkFilterLabelAdd:
         ], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 1 issues." in result.output
-        assert "critical" in load_issue(initialized_cli, 1).labels
+        assert "critical" in load_issue(initialized_cli / ".yait", 1).labels
 
     def test_filter_no_match(self, runner: CliRunner, initialized_cli):
         _create_typed_issues(runner)
@@ -1211,8 +1211,8 @@ class TestBulkFilterLabelRemove:
         ], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 2 issues." in result.output
-        assert "urgent" not in load_issue(initialized_cli, 1).labels
-        assert "urgent" not in load_issue(initialized_cli, 2).labels
+        assert "urgent" not in load_issue(initialized_cli / ".yait", 1).labels
+        assert "urgent" not in load_issue(initialized_cli / ".yait", 2).labels
 
 
 class TestBulkFilterAssign:
@@ -1232,7 +1232,7 @@ class TestBulkFilterAssign:
         ], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 1 issues." in result.output
-        assert load_issue(initialized_cli, 4).assignee == "charlie"
+        assert load_issue(initialized_cli / ".yait", 4).assignee == "charlie"
 
 
 class TestBulkFilterUnassign:
@@ -1244,7 +1244,7 @@ class TestBulkFilterUnassign:
         assert result.exit_code == 0
         # Issue #1 is open and assigned to alice; #3 is closed
         assert "Updated 1 issues." in result.output
-        assert load_issue(initialized_cli, 1).assignee is None
+        assert load_issue(initialized_cli / ".yait", 1).assignee is None
 
 
 class TestBulkFilterPriority:
@@ -1255,8 +1255,8 @@ class TestBulkFilterPriority:
         ], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 2 issues." in result.output
-        assert load_issue(initialized_cli, 1).priority == "p0"
-        assert load_issue(initialized_cli, 2).priority == "p0"
+        assert load_issue(initialized_cli / ".yait", 1).priority == "p0"
+        assert load_issue(initialized_cli / ".yait", 2).priority == "p0"
 
 
 class TestBulkFilterMilestone:
@@ -1267,7 +1267,7 @@ class TestBulkFilterMilestone:
         ], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Updated 1 issues." in result.output
-        assert load_issue(initialized_cli, 4).milestone == "v2.0"
+        assert load_issue(initialized_cli / ".yait", 4).milestone == "v2.0"
 
 
 class TestBulkFilterType:
@@ -1279,7 +1279,7 @@ class TestBulkFilterType:
         assert result.exit_code == 0
         # Issue #4 already is enhancement, but the command still sets it
         assert "Updated 1 issues." in result.output
-        assert load_issue(initialized_cli, 4).type == "enhancement"
+        assert load_issue(initialized_cli / ".yait", 4).type == "enhancement"
 
     def test_filter_and_ids_conflict(self, runner: CliRunner, initialized_cli):
         _create_typed_issues(runner)
@@ -1313,8 +1313,8 @@ class TestTemplateList:
         assert "No templates found." in result.output
 
     def test_list_shows_templates(self, runner: CliRunner, initialized_cli):
-        _setup_bug_template(initialized_cli)
-        save_template(initialized_cli, Template(name="feature", type="feature"))
+        _setup_bug_template(initialized_cli / ".yait")
+        save_template(initialized_cli / ".yait", Template(name="feature", type="feature"))
         result = runner.invoke(main, ["template", "list"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "bug" in result.output
@@ -1324,11 +1324,11 @@ class TestTemplateList:
 
 class TestTemplateDelete:
     def test_delete_template(self, runner: CliRunner, initialized_cli):
-        _setup_bug_template(initialized_cli)
+        _setup_bug_template(initialized_cli / ".yait")
         result = runner.invoke(main, ["template", "delete", "bug"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Deleted template 'bug'" in result.output
-        assert list_templates(initialized_cli) == []
+        assert list_templates(initialized_cli / ".yait") == []
 
     def test_delete_nonexistent(self, runner: CliRunner, initialized_cli):
         result = runner.invoke(main, ["template", "delete", "nope"])
@@ -1347,7 +1347,7 @@ class TestTemplateCreate:
         result = runner.invoke(main, ["template", "create", "bug"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Saved template 'bug'" in result.output
-        tmpl = load_template(initialized_cli, "bug")
+        tmpl = load_template(initialized_cli / ".yait", "bug")
         assert tmpl.type == "bug"
         assert tmpl.priority == "p1"
         assert tmpl.labels == ["needs-triage"]
@@ -1363,12 +1363,12 @@ class TestTemplateCreate:
 class TestNewWithTemplate:
     def test_new_with_template(self, runner: CliRunner, initialized_cli):
         """--template fills type, priority, labels, body from template."""
-        _setup_bug_template(initialized_cli)
+        _setup_bug_template(initialized_cli / ".yait")
         result = runner.invoke(main, [
             "new", "Login crash", "--template", "bug",
         ], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "bug"
         assert issue.priority == "p1"
         assert issue.labels == ["needs-triage"]
@@ -1376,25 +1376,25 @@ class TestNewWithTemplate:
 
     def test_template_cli_overrides(self, runner: CliRunner, initialized_cli):
         """CLI args override template values."""
-        _setup_bug_template(initialized_cli)
+        _setup_bug_template(initialized_cli / ".yait")
         result = runner.invoke(main, [
             "new", "Login crash", "--template", "bug",
             "-t", "feature", "-p", "p0", "-l", "custom",
         ], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "feature"
         assert issue.priority == "p0"
         assert issue.labels == ["custom"]
 
     def test_template_body_overridden(self, runner: CliRunner, initialized_cli):
         """--body overrides template body."""
-        _setup_bug_template(initialized_cli)
+        _setup_bug_template(initialized_cli / ".yait")
         result = runner.invoke(main, [
             "new", "Login crash", "--template", "bug", "-b", "custom body",
         ], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.body == "custom body"
 
     def test_template_not_found(self, runner: CliRunner, initialized_cli):
@@ -1412,7 +1412,7 @@ class TestNewWithTemplate:
             "new", "plain issue",
         ], catch_exceptions=False)
         assert result.exit_code == 0
-        issue = load_issue(initialized_cli, 1)
+        issue = load_issue(initialized_cli / ".yait", 1)
         assert issue.type == "misc"
         assert issue.priority == "none"
         assert issue.labels == []

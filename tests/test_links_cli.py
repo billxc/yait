@@ -38,8 +38,8 @@ class TestLinkCommand:
         result = runner.invoke(main, ["link", "1", "blocks", "2"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Linked #1 blocks #2" in result.output
-        source = load_issue(initialized_cli, 1)
-        target = load_issue(initialized_cli, 2)
+        source = load_issue(initialized_cli / ".yait", 1)
+        target = load_issue(initialized_cli / ".yait", 2)
         assert {"type": "blocks", "target": 2} in source.links
         assert {"type": "blocked-by", "target": 1} in target.links
 
@@ -55,8 +55,8 @@ class TestLinkCommand:
         _create_issue(runner, "Target")
         result = runner.invoke(main, ["link", "1", "relates-to", "2"], catch_exceptions=False)
         assert result.exit_code == 0
-        source = load_issue(initialized_cli, 1)
-        target = load_issue(initialized_cli, 2)
+        source = load_issue(initialized_cli / ".yait", 1)
+        target = load_issue(initialized_cli / ".yait", 2)
         assert {"type": "relates-to", "target": 2} in source.links
         assert {"type": "relates-to", "target": 1} in target.links
 
@@ -95,8 +95,8 @@ class TestUnlinkCommand:
         result = runner.invoke(main, ["unlink", "1", "2"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Unlinked #1 and #2" in result.output
-        source = load_issue(initialized_cli, 1)
-        target = load_issue(initialized_cli, 2)
+        source = load_issue(initialized_cli / ".yait", 1)
+        target = load_issue(initialized_cli / ".yait", 2)
         assert source.links == []
         assert target.links == []
 

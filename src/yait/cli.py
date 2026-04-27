@@ -59,6 +59,57 @@ def _root() -> Path:
     return Path.cwd()
 
 
+def _resolve(ctx) -> Path:
+    """Resolve the yait data directory from --project, YAIT_PROJECT, or cwd.
+
+    Returns the Path to the data directory (containing config.yaml, issues/, etc).
+    Also stores is_project in ctx.obj for git staging decisions.
+    """
+    if ctx.obj.get("data_dir") is not None:
+        return ctx.obj["data_dir"]
+
+    project = ctx.obj.get("project")
+    yait_home = Path(os.environ.get("YAIT_HOME", "~/.yait")).expanduser()
+
+    name = project or os.environ.get("YAIT_PROJECT")
+    if name:
+        p = yait_home / "projects" / name
+        if not p.is_dir():
+            raise click.ClickException(
+                f"Project '{name}' not found.\n"
+                f"  Create it:      yait project create {name}\n"
+                f"  List projects:  yait project list\n"
+                f"  Import local:   yait project import {name}"
+            )
+        ctx.obj["data_dir"] = p
+        ctx.obj["is_project"] = True
+        return p
+
+    local = Path.cwd() / ".yait"
+    if local.is_dir():
+        ctx.obj["data_dir"] = local
+        ctx.obj["is_project"] = False
+        return local
+
+    raise click.ClickException(
+        "No yait project found.\n\n"
+        "  Use one of:\n"
+        "    yait -P <name> <command>     Use a named project\n"
+        "    export YAIT_PROJECT=<name>   Set default project for this shell\n"
+        "    yait init                    Create local .yait/ in current directory\n"
+        "    yait project create <name>   Create a new named project\n\n"
+        "  List existing projects: yait project list"
+    )
+
+
+def _commit(ctx, root: Path, message: str) -> None:
+    """Git commit helper that handles local vs project mode staging."""
+    if ctx.obj.get("is_project"):
+        git_commit(root, message, ".")
+    else:
+        git_commit(root.parent, message, ".yait")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
@@ -222,27 +273,40 @@ Quick start:
   yait close 1
 """)
 @click.version_option(version=__version__)
-def main():
+@click.option("--project", "-P", default=None, envvar="YAIT_PROJECT",
+              help="Named project (stored in ~/.yait/projects/)")
+@click.pass_context
+def main(ctx, project):
     """yait — Yet Another Issue Tracker
 
     A lightweight, git-backed issue tracker that lives in your repo.
     Issues are stored as Markdown files and every change is auto-committed.
     """
+    ctx.ensure_object(dict)
+    ctx.obj["project"] = project
 
 
 # ── init ─────────────────────────────────────────────────────
 
 @main.command()
-def init():
+@click.pass_context
+def init(ctx):
     """Initialize yait in current directory."""
-    root = _root()
-    if is_initialized(root):
+    project = ctx.obj.get("project")
+    if project:
+        # Delegate to project create (Phase 1b placeholder)
+        raise click.ClickException(
+            f"Named project creation not yet implemented. "
+            f"Use 'yait project create {project}' instead."
+        )
+    data_dir = Path.cwd() / ".yait"
+    if is_initialized(data_dir):
         click.echo("yait already initialized.")
         return
     # init creates .yait/ so we cannot lock before it exists.
-    init_store(root)
+    init_store(data_dir)
     click.echo("Initialized yait in .yait/")
-    git_commit(root, "yait: init")
+    git_commit(Path.cwd(), "yait: init")
 
 
 # ── config ──────────────────────────────────────────────────
@@ -260,7 +324,7 @@ def config(ctx):
     """
     if ctx.invoked_subcommand is not None:
         return
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     defaults = get_defaults(root)
     display = get_display(root)
@@ -289,7 +353,8 @@ def _format_config_value(v) -> str:
 @config.command(name="set")
 @click.argument("key")
 @click.argument("value")
-def config_set(key, value):
+@click.pass_context
+def config_set(ctx, key, value):
     """Set a configuration value.
 
     \b
@@ -301,7 +366,7 @@ def config_set(key, value):
       yait config set display.max_title_width 60
       yait config set display.date_format full
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "config set"):
         try:
@@ -313,7 +378,8 @@ def config_set(key, value):
 
 @config.command(name="reset")
 @click.argument("key")
-def config_reset(key):
+@click.pass_context
+def config_reset(ctx, key):
     """Reset a configuration value to its default.
 
     \b
@@ -321,7 +387,7 @@ def config_reset(key):
       yait config reset defaults.type
       yait config reset display.max_title_width
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "config reset"):
         try:
@@ -344,7 +410,8 @@ def config_reset(key):
 @click.option("--body-file", default=None, help="Read body from file")
 @click.option("--milestone", "-m", default=None, help="Milestone (e.g. v1.0)")
 @click.option("--template", "template_name", default=None, help="Create from template")
-def new(title, title_opt, type, priority, label, assign, body, body_file, milestone, template_name):
+@click.pass_context
+def new(ctx, title, title_opt, type, priority, label, assign, body, body_file, milestone, template_name):
     """Create a new issue.
 
     \b
@@ -361,7 +428,7 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
     resolved = title or title_opt
     if not resolved or not resolved.strip():
         raise click.ClickException("Title cannot be empty or whitespace only")
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
 
     with YaitLock(root, "new"):
@@ -411,7 +478,7 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
         )
         save_issue(root, issue)
         click.echo(f"Created issue #{nid}: {resolved}")
-        git_commit(root, f"yait: create issue #{nid} \u2014 {resolved}")
+        _commit(ctx, root, f"yait: create issue #{nid} \u2014 {resolved}")
 
 
 # ── list ─────────────────────────────────────────────────────
@@ -434,7 +501,8 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
 @click.option("--doc", "doc_filter", default=None, help="Only issues linked to this doc slug/path")
 @click.option("--compact", is_flag=True, default=False, help="Compact output (ID + Status + Title)")
 @click.option("--wide", is_flag=True, default=False, help="Wide output (all fields including dates)")
-def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, has_doc, no_doc, doc_filter, compact, wide):
+@click.pass_context
+def list_cmd(ctx, status, type, priority, label, assignee, milestone, as_json, sort, has_doc, no_doc, doc_filter, compact, wide):
     """List issues (default: open only).
 
     \b
@@ -445,7 +513,7 @@ def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, 
       yait list --milestone v1.0
       yait list --assignee alice --sort updated --json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     st = None if status == "all" else status
     issues = list_issues(root, status=st, type=type, label=label, assignee=assignee, priority=priority, milestone=milestone)
@@ -478,7 +546,8 @@ def list_cmd(status, type, priority, label, assignee, milestone, as_json, sort, 
 @main.command()
 @click.argument("id", type=int)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
-def show(id, as_json):
+@click.pass_context
+def show(ctx, id, as_json):
     """Show issue details.
 
     \b
@@ -486,7 +555,7 @@ def show(id, as_json):
       yait show 1
       yait show 1 --json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     if as_json:
@@ -528,11 +597,14 @@ def show(id, as_json):
                 except FileNotFoundError:
                     click.echo(f"  - {doc_ref} (not found)")
             else:
-                doc_file = root / doc_ref
-                if doc_file.exists():
-                    click.echo(f"  - {doc_ref}")
+                if ctx.obj.get("is_project"):
+                    click.echo(f"  - {doc_ref} (external ref, not available in project mode)")
                 else:
-                    click.echo(f"  - {doc_ref} (file not found)")
+                    doc_file = root.parent / doc_ref
+                    if doc_file.exists():
+                        click.echo(f"  - {doc_ref}")
+                    else:
+                        click.echo(f"  - {doc_ref} (file not found)")
     if issue.links:
         click.echo("Links:")
         for link in issue.links:
@@ -555,9 +627,10 @@ def show(id, as_json):
 
 @main.command()
 @click.argument("ids", nargs=-1, type=int, required=True)
-def close(ids):
+@click.pass_context
+def close(ctx, ids):
     """Close one or more issues."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "close"):
         for id in ids:
@@ -569,7 +642,7 @@ def close(ids):
             issue.updated_at = _now()
             save_issue(root, issue)
             click.echo(f"Closed issue #{id}: {issue.title}")
-            git_commit(root, f"yait: close issue #{id}")
+            _commit(ctx, root, f"yait: close issue #{id}")
 
 
 # ── delete ──────────────────────────────────────────────────
@@ -577,7 +650,8 @@ def close(ids):
 @main.command()
 @click.argument("id", type=int)
 @click.option("--force", "-f", is_flag=True, default=False, help="Skip confirmation prompt")
-def delete(id, force):
+@click.pass_context
+def delete(ctx, id, force):
     """Delete an issue permanently.
 
     \b
@@ -585,7 +659,7 @@ def delete(id, force):
       yait delete 1
       yait delete 1 -f   # skip confirmation
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     if not force:
@@ -593,16 +667,17 @@ def delete(id, force):
     with YaitLock(root, "delete"):
         delete_issue(root, id)
         click.echo(f"Deleted issue #{id}: {issue.title}")
-        git_commit(root, f"yait: delete issue #{id}")
+        _commit(ctx, root, f"yait: delete issue #{id}")
 
 
 # ── reopen ───────────────────────────────────────────────────
 
 @main.command()
 @click.argument("ids", nargs=-1, type=int, required=True)
-def reopen(ids):
+@click.pass_context
+def reopen(ctx, ids):
     """Reopen one or more closed issues."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "reopen"):
         for id in ids:
@@ -614,7 +689,7 @@ def reopen(ids):
             issue.updated_at = _now()
             save_issue(root, issue)
             click.echo(f"Reopened issue #{id}: {issue.title}")
-            git_commit(root, f"yait: reopen issue #{id}")
+            _commit(ctx, root, f"yait: reopen issue #{id}")
 
 
 # ── comment ──────────────────────────────────────────────────
@@ -623,9 +698,10 @@ def reopen(ids):
 @click.argument("id", type=int)
 @click.option("--message", "-m", default=None, help="Comment text (use '-' for stdin)")
 @click.option("--message-file", default=None, help="Read comment from file")
-def comment(id, message, message_file):
+@click.pass_context
+def comment(ctx, id, message, message_file):
     """Add a comment to an issue."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     message = _read_message(message, message_file)
@@ -642,7 +718,7 @@ def comment(id, message, message_file):
         issue.updated_at = now
         save_issue(root, issue)
         click.echo(f"Added comment to issue #{id}")
-        git_commit(root, f"yait: comment on issue #{id}")
+        _commit(ctx, root, f"yait: comment on issue #{id}")
 
 
 # ── edit ─────────────────────────────────────────────────────
@@ -656,7 +732,8 @@ def comment(id, message, message_file):
 @click.option("--body", "-b", "new_body", default=None, help="New body (use '-' for stdin)")
 @click.option("--body-file", "new_body_file", default=None, help="Read new body from file")
 @click.option("--milestone", "-m", "new_milestone", default=None, help="New milestone")
-def edit(id, new_title, new_type, new_priority, new_assign, new_body, new_body_file, new_milestone):
+@click.pass_context
+def edit(ctx, id, new_title, new_type, new_priority, new_assign, new_body, new_body_file, new_milestone):
     """Edit an issue inline or in $EDITOR.
 
     \b
@@ -668,7 +745,7 @@ def edit(id, new_title, new_type, new_priority, new_assign, new_body, new_body_f
       yait edit 1 --body-file updated.md
       yait edit 1                  # opens $EDITOR
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     if new_body is not None or new_body_file is not None:
@@ -691,7 +768,7 @@ def edit(id, new_title, new_type, new_priority, new_assign, new_body, new_body_f
             issue.updated_at = _now()
             save_issue(root, issue)
             click.echo(f"Updated issue #{id}: {issue.title}")
-            git_commit(root, f"yait: edit #{id}")
+            _commit(ctx, root, f"yait: edit #{id}")
     else:
         template = f"title: {issue.title}\n\n{issue.body}"
         result = click.edit(template)
@@ -709,7 +786,7 @@ def edit(id, new_title, new_type, new_priority, new_assign, new_body, new_body_f
             issue.updated_at = _now()
             save_issue(root, issue)
             click.echo(f"Updated issue #{id}: {issue.title}")
-            git_commit(root, f"yait: edit #{id}")
+            _commit(ctx, root, f"yait: edit #{id}")
 
 
 # ── label ────────────────────────────────────────────────────
@@ -722,9 +799,10 @@ def label():
 @label.command(name="add")
 @click.argument("id", type=int)
 @click.argument("name")
-def label_add(id, name):
+@click.pass_context
+def label_add(ctx, id, name):
     """Add a label to an issue."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     if name in issue.labels:
@@ -735,15 +813,16 @@ def label_add(id, name):
         issue.updated_at = _now()
         save_issue(root, issue)
         click.echo(f"Added label '{name}' to issue #{id}")
-        git_commit(root, f"yait: label #{id} +{name}")
+        _commit(ctx, root, f"yait: label #{id} +{name}")
 
 
 @label.command(name="remove")
 @click.argument("id", type=int)
 @click.argument("name")
-def label_remove(id, name):
+@click.pass_context
+def label_remove(ctx, id, name):
     """Remove a label from an issue."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     if name not in issue.labels:
@@ -754,7 +833,7 @@ def label_remove(id, name):
         issue.updated_at = _now()
         save_issue(root, issue)
         click.echo(f"Removed label '{name}' from issue #{id}")
-        git_commit(root, f"yait: label #{id} -{name}")
+        _commit(ctx, root, f"yait: label #{id} -{name}")
 
 
 # ── milestone ───────────────────────────────────────────────
@@ -768,7 +847,8 @@ def milestone():
 @click.argument("name")
 @click.option("--description", "-d", default="", help="Milestone description")
 @click.option("--due", default=None, help="Due date (YYYY-MM-DD)")
-def milestone_create(name, description, due):
+@click.pass_context
+def milestone_create(ctx, name, description, due):
     """Create a new milestone.
 
     \b
@@ -776,7 +856,7 @@ def milestone_create(name, description, due):
       yait milestone create v1.0
       yait milestone create v1.0 --description "First release" --due 2026-06-01
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     m = Milestone(
         name=name,
@@ -790,13 +870,14 @@ def milestone_create(name, description, due):
         except ValueError as e:
             raise click.ClickException(str(e))
         click.echo(f"Created milestone '{name}'")
-        git_commit(root, f"yait: create milestone '{name}'")
+        _commit(ctx, root, f"yait: create milestone '{name}'")
 
 
 @milestone.command(name="list")
 @click.option("--status", default=None, type=click.Choice(list(MILESTONE_STATUSES)), help="Filter by status")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
-def milestone_list(status, as_json):
+@click.pass_context
+def milestone_list(ctx, status, as_json):
     """List milestones.
 
     \b
@@ -805,7 +886,7 @@ def milestone_list(status, as_json):
       yait milestone list --status open
       yait milestone list --json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     milestones = list_milestones(root, status=status)
     if as_json:
@@ -836,7 +917,8 @@ def milestone_list(status, as_json):
 @milestone.command(name="show")
 @click.argument("name")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
-def milestone_show(name, as_json):
+@click.pass_context
+def milestone_show(ctx, name, as_json):
     """Show milestone details.
 
     \b
@@ -844,7 +926,7 @@ def milestone_show(name, as_json):
       yait milestone show v1.0
       yait milestone show v1.0 --json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         m = load_milestone(root, name)
@@ -886,14 +968,15 @@ def milestone_show(name, as_json):
 
 @milestone.command(name="close")
 @click.argument("name")
-def milestone_close(name):
+@click.pass_context
+def milestone_close(ctx, name):
     """Close a milestone.
 
     \b
     Examples:
       yait milestone close v1.0
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         m = load_milestone(root, name)
@@ -906,19 +989,20 @@ def milestone_close(name):
         m.status = "closed"
         update_milestone(root, m)
         click.echo(f"Closed milestone '{name}'")
-        git_commit(root, f"yait: close milestone '{name}'")
+        _commit(ctx, root, f"yait: close milestone '{name}'")
 
 
 @milestone.command(name="reopen")
 @click.argument("name")
-def milestone_reopen(name):
+@click.pass_context
+def milestone_reopen(ctx, name):
     """Reopen a closed milestone.
 
     \b
     Examples:
       yait milestone reopen v1.0
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         m = load_milestone(root, name)
@@ -931,14 +1015,15 @@ def milestone_reopen(name):
         m.status = "open"
         update_milestone(root, m)
         click.echo(f"Reopened milestone '{name}'")
-        git_commit(root, f"yait: reopen milestone '{name}'")
+        _commit(ctx, root, f"yait: reopen milestone '{name}'")
 
 
 @milestone.command(name="edit")
 @click.argument("name")
 @click.option("--description", "-d", default=None, help="New description")
 @click.option("--due", default=None, help="New due date (YYYY-MM-DD)")
-def milestone_edit(name, description, due):
+@click.pass_context
+def milestone_edit(ctx, name, description, due):
     """Edit a milestone.
 
     \b
@@ -946,7 +1031,7 @@ def milestone_edit(name, description, due):
       yait milestone edit v1.0 --description "Updated"
       yait milestone edit v1.0 --due 2026-07-01
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         m = load_milestone(root, name)
@@ -964,13 +1049,14 @@ def milestone_edit(name, description, due):
         except ValueError as e:
             raise click.ClickException(str(e))
         click.echo(f"Updated milestone '{name}'")
-        git_commit(root, f"yait: edit milestone '{name}'")
+        _commit(ctx, root, f"yait: edit milestone '{name}'")
 
 
 @milestone.command(name="delete")
 @click.argument("name")
 @click.option("--force", "-f", is_flag=True, default=False, help="Force delete and clear issue references")
-def milestone_delete(name, force):
+@click.pass_context
+def milestone_delete(ctx, name, force):
     """Delete a milestone.
 
     \b
@@ -982,7 +1068,7 @@ def milestone_delete(name, force):
       yait milestone delete v1.0
       yait milestone delete v1.0 --force
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "milestone delete"):
         try:
@@ -992,7 +1078,7 @@ def milestone_delete(name, force):
         except ValueError as e:
             raise click.ClickException(str(e).replace("force=True", "--force"))
         click.echo(f"Deleted milestone '{name}'")
-        git_commit(root, f"yait: delete milestone '{name}'")
+        _commit(ctx, root, f"yait: delete milestone '{name}'")
 
 
 # ── template ───────────────────────────────────────────────
@@ -1004,7 +1090,8 @@ def template():
 
 @template.command(name="create")
 @click.argument("name")
-def template_create(name):
+@click.pass_context
+def template_create(ctx, name):
     """Create or edit an issue template.
 
     \b
@@ -1015,7 +1102,7 @@ def template_create(name):
       yait template create bug
       yait template create feature
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         existing = load_template(root, name)
@@ -1065,18 +1152,19 @@ def template_create(name):
     with YaitLock(root, "template create"):
         save_template(root, tmpl)
         click.echo(f"Saved template '{tmpl.name}'")
-        git_commit(root, f"yait: save template '{tmpl.name}'")
+        _commit(ctx, root, f"yait: save template '{tmpl.name}'")
 
 
 @template.command(name="list")
-def template_list():
+@click.pass_context
+def template_list(ctx):
     """List available templates.
 
     \b
     Examples:
       yait template list
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     templates = list_templates(root)
     if not templates:
@@ -1091,14 +1179,15 @@ def template_list():
 
 @template.command(name="delete")
 @click.argument("name")
-def template_delete(name):
+@click.pass_context
+def template_delete(ctx, name):
     """Delete a template.
 
     \b
     Examples:
       yait template delete bug
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "template delete"):
         try:
@@ -1106,7 +1195,7 @@ def template_delete(name):
         except FileNotFoundError as e:
             raise click.ClickException(str(e))
         click.echo(f"Deleted template '{name}'")
-        git_commit(root, f"yait: delete template '{name}'")
+        _commit(ctx, root, f"yait: delete template '{name}'")
 
 
 # ── search ───────────────────────────────────────────────────
@@ -1129,7 +1218,8 @@ def template_delete(name):
 @click.option("--count", is_flag=True, default=False, help="Show match count only")
 @click.option("--compact", is_flag=True, default=False, help="Compact output (ID + Status + Title)")
 @click.option("--wide", is_flag=True, default=False, help="Wide output (all fields including dates)")
-def search(query, status, type, as_json, label, priority, assignee, milestone,
+@click.pass_context
+def search(ctx, query, status, type, as_json, label, priority, assignee, milestone,
            use_regex, title_only, count, compact, wide):
     """Full-text search across issue titles and bodies.
 
@@ -1143,7 +1233,7 @@ def search(query, status, type, as_json, label, priority, assignee, milestone,
       yait search "login" --title-only
       yait search "bug" --count
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     st = None if status == "all" else status
     issues = list_issues(root, status=st, type=type, label=label,
@@ -1269,9 +1359,10 @@ def _print_dimension(title: str, data: dict, show_percent: bool = False):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--by", "dimension", type=click.Choice(["type", "priority", "label", "milestone", "assignee"]),
               help="Show breakdown for a single dimension")
-def stats(as_json, dimension):
+@click.pass_context
+def stats(ctx, as_json, dimension):
     """Show issue statistics."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     all_issues = list_issues(root, status=None)
     total = len(all_issues)
@@ -1327,9 +1418,10 @@ def stats(as_json, dimension):
 @main.command()
 @click.argument("id", type=int)
 @click.argument("name")
-def assign(id, name):
+@click.pass_context
+def assign(ctx, id, name):
     """Assign an issue to someone."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     with YaitLock(root, "assign"):
@@ -1337,14 +1429,15 @@ def assign(id, name):
         issue.updated_at = _now()
         save_issue(root, issue)
         click.echo(f"Assigned issue #{id} to {name}")
-        git_commit(root, f"yait: assign #{id} to {name}")
+        _commit(ctx, root, f"yait: assign #{id} to {name}")
 
 
 @main.command()
 @click.argument("id", type=int)
-def unassign(id):
+@click.pass_context
+def unassign(ctx, id):
     """Remove assignee from an issue."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     with YaitLock(root, "unassign"):
@@ -1352,7 +1445,7 @@ def unassign(id):
         issue.updated_at = _now()
         save_issue(root, issue)
         click.echo(f"Unassigned issue #{id}")
-        git_commit(root, f"yait: unassign #{id}")
+        _commit(ctx, root, f"yait: unassign #{id}")
 
 
 # ── log ─────────────────────────────────────────────────────
@@ -1360,18 +1453,31 @@ def unassign(id):
 @main.command()
 @click.argument("id", type=int, required=False, default=None)
 @click.option("--limit", "-n", default=10, help="Max entries")
-def log(id, limit):
+@click.pass_context
+def log(ctx, id, limit):
     """Show issue change history from git log."""
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
-    if id is not None:
-        sid = str(id)
-        if not sid.isdigit():
-            raise click.BadParameter(f"Invalid issue ID: {id!r}")
-        path = f".yait/issues/{sid}.md"
+    is_project = ctx.obj.get("is_project", False)
+    if is_project:
+        git_root = root
+        if id is not None:
+            sid = str(id)
+            if not sid.isdigit():
+                raise click.BadParameter(f"Invalid issue ID: {id!r}")
+            path = f"issues/{sid}.md"
+        else:
+            path = "."
     else:
-        path = ".yait/"
-    output = git_log(root, path, limit)
+        git_root = root.parent
+        if id is not None:
+            sid = str(id)
+            if not sid.isdigit():
+                raise click.BadParameter(f"Invalid issue ID: {id!r}")
+            path = f".yait/issues/{sid}.md"
+        else:
+            path = ".yait/"
+    output = git_log(git_root, path, limit)
     if output:
         click.echo(output)
     else:
@@ -1383,7 +1489,8 @@ def log(id, limit):
 @main.command(name="export")
 @click.option("--format", "fmt", default="json", type=click.Choice(["json", "csv"]), help="Output format (default: json)")
 @click.option("-o", "--output", "outfile", default=None, help="Output file path (default: stdout)")
-def export_cmd(fmt, outfile):
+@click.pass_context
+def export_cmd(ctx, fmt, outfile):
     """Export all issues.
 
     \b
@@ -1393,7 +1500,7 @@ def export_cmd(fmt, outfile):
       yait export -o issues.json
       yait export --format csv -o issues.csv
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issues = list_issues(root, status=None)
     issues.sort(key=lambda i: i.id)
@@ -1425,14 +1532,15 @@ def export_cmd(fmt, outfile):
 
 @main.command(name="import")
 @click.argument("file", type=click.Path(exists=True))
-def import_cmd(file):
+@click.pass_context
+def import_cmd(ctx, file):
     """Import issues from a JSON file.
 
     \b
     Examples:
       yait import issues.json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     data = json.loads(Path(file).read_text())
     if not isinstance(data, list):
@@ -1474,7 +1582,7 @@ def import_cmd(file):
             if cfg["next_id"] <= max_id:
                 cfg["next_id"] = max_id + 1
                 _write_config(root, cfg)
-            git_commit(root, f"yait: import {imported} issues")
+            _commit(ctx, root, f"yait: import {imported} issues")
 
         click.echo(f"Imported {imported} issues, skipped {skipped}.")
 
@@ -1491,7 +1599,8 @@ def doc():
 @click.option("--title", "-T", required=True, help="Document title")
 @click.option("--body", "-b", default=None, help="Document body text")
 @click.option("--body-file", default=None, help="Read body from file")
-def doc_create(slug, title, body, body_file):
+@click.pass_context
+def doc_create(ctx, slug, title, body, body_file):
     """Create a managed document.
 
     \b
@@ -1500,7 +1609,7 @@ def doc_create(slug, title, body, body_file):
       yait doc create auth-prd --title "Auth PRD" -b "## Overview"
       yait doc create auth-prd --title "Auth PRD" --body-file draft.md
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     if "/" in slug:
         raise click.ClickException("Doc slug cannot contain '/'. Use a simple name like 'auth-prd'.")
@@ -1517,13 +1626,14 @@ def doc_create(slug, title, body, body_file):
         d = Doc(slug=slug, title=title, created_at=now, updated_at=now, body=resolved_body)
         save_doc(root, d)
         click.echo(f"Created doc '{slug}': {title}")
-        git_commit(root, f"yait: create doc '{slug}'")
+        _commit(ctx, root, f"yait: create doc '{slug}'")
 
 
 @doc.command(name="show")
 @click.argument("slug")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
-def doc_show(slug, as_json):
+@click.pass_context
+def doc_show(ctx, slug, as_json):
     """Show a managed document.
 
     \b
@@ -1531,7 +1641,7 @@ def doc_show(slug, as_json):
       yait doc show auth-prd
       yait doc show auth-prd --json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     if "/" in slug:
         raise click.ClickException(f"'{slug}' is an external reference, not a managed doc. View it directly.")
@@ -1559,7 +1669,8 @@ def doc_show(slug, as_json):
 
 @doc.command(name="list")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
-def doc_list(as_json):
+@click.pass_context
+def doc_list(ctx, as_json):
     """List all managed documents.
 
     \b
@@ -1567,7 +1678,7 @@ def doc_list(as_json):
       yait doc list
       yait doc list --json
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     docs = list_docs(root)
     if as_json:
@@ -1596,7 +1707,8 @@ def doc_list(as_json):
 @click.argument("slug")
 @click.option("--title", "-T", "new_title", default=None, help="New title")
 @click.option("--body", "-b", "new_body", default=None, help="New body text")
-def doc_edit(slug, new_title, new_body):
+@click.pass_context
+def doc_edit(ctx, slug, new_title, new_body):
     """Edit a managed document.
 
     \b
@@ -1605,7 +1717,7 @@ def doc_edit(slug, new_title, new_body):
       yait doc edit auth-prd --title "New Title"
       yait doc edit auth-prd -b "New content"
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         d = load_doc(root, slug)
@@ -1620,7 +1732,7 @@ def doc_edit(slug, new_title, new_body):
             d.updated_at = _now()
             save_doc(root, d)
             click.echo(f"Updated doc '{slug}'")
-            git_commit(root, f"yait: edit doc '{slug}'")
+            _commit(ctx, root, f"yait: edit doc '{slug}'")
     else:
         result = click.edit(d.body)
         if result is None:
@@ -1631,13 +1743,14 @@ def doc_edit(slug, new_title, new_body):
             d.updated_at = _now()
             save_doc(root, d)
             click.echo(f"Updated doc '{slug}'")
-            git_commit(root, f"yait: edit doc '{slug}'")
+            _commit(ctx, root, f"yait: edit doc '{slug}'")
 
 
 @doc.command(name="delete")
 @click.argument("slug")
 @click.option("--force", "-f", is_flag=True, default=False, help="Skip confirmation")
-def doc_delete(slug, force):
+@click.pass_context
+def doc_delete(ctx, slug, force):
     """Delete a managed document.
 
     \b
@@ -1645,7 +1758,7 @@ def doc_delete(slug, force):
       yait doc delete auth-prd
       yait doc delete auth-prd -f
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     try:
         d = load_doc(root, slug)
@@ -1662,12 +1775,13 @@ def doc_delete(slug, force):
     with YaitLock(root, "doc delete"):
         delete_doc(root, slug)
         click.echo(f"Deleted doc '{slug}'")
-        git_commit(root, f"yait: delete doc '{slug}'")
+        _commit(ctx, root, f"yait: delete doc '{slug}'")
 
 
 @doc.command(name="link")
 @click.argument("args", nargs=-1, required=True)
-def doc_link(args):
+@click.pass_context
+def doc_link(ctx, args):
     """Link a document to one or more issues.
 
     \b
@@ -1679,7 +1793,7 @@ def doc_link(args):
       yait doc link 1 docs/arch.md
       yait doc link 1 2 3 auth-prd
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     if len(args) < 2:
         raise click.ClickException("Usage: yait doc link <id> [id...] <doc>")
@@ -1707,20 +1821,21 @@ def doc_link(args):
             else:
                 ids_str = ", ".join(f"#{i}" for i in linked_ids)
                 click.echo(f"Linked doc '{doc_ref}' to issues {ids_str}")
-            git_commit(root, f"yait: link doc '{doc_ref}' to #{', #'.join(str(i) for i in linked_ids)}")
+            _commit(ctx, root, f"yait: link doc '{doc_ref}' to #{', #'.join(str(i) for i in linked_ids)}")
 
 
 @doc.command(name="unlink")
 @click.argument("id", type=int)
 @click.argument("doc_ref")
-def doc_unlink(id, doc_ref):
+@click.pass_context
+def doc_unlink(ctx, id, doc_ref):
     """Unlink a document from an issue.
 
     \b
     Examples:
       yait doc unlink 1 auth-prd
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     issue = _load_or_exit(root, id)
     if doc_ref not in issue.docs:
@@ -1731,7 +1846,7 @@ def doc_unlink(id, doc_ref):
         issue.updated_at = _now()
         save_issue(root, issue)
         click.echo(f"Unlinked doc '{doc_ref}' from issue #{id}")
-        git_commit(root, f"yait: unlink doc '{doc_ref}' from #{id}")
+        _commit(ctx, root, f"yait: unlink doc '{doc_ref}' from #{id}")
 
 
 # ── link / unlink ──────────────────────────────────────────
@@ -1744,7 +1859,8 @@ _USER_LINK_TYPES = ("blocks", "depends-on", "relates-to")
 @click.argument("source_id", type=int)
 @click.argument("link_type", type=click.Choice(_USER_LINK_TYPES))
 @click.argument("target_id", type=int)
-def link_cmd(source_id, link_type, target_id):
+@click.pass_context
+def link_cmd(ctx, source_id, link_type, target_id):
     """Add a link between two issues.
 
     \b
@@ -1753,7 +1869,7 @@ def link_cmd(source_id, link_type, target_id):
       yait link 3 relates-to 7      # issue #3 relates to #7
       yait link 3 depends-on 1      # issue #3 depends on #1
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "link"):
         try:
@@ -1763,20 +1879,21 @@ def link_cmd(source_id, link_type, target_id):
         except ValueError as e:
             raise click.ClickException(str(e))
         click.echo(f"Linked #{source_id} {link_type} #{target_id}")
-        git_commit(root, f"yait: link #{source_id} {link_type} #{target_id}")
+        _commit(ctx, root, f"yait: link #{source_id} {link_type} #{target_id}")
 
 
 @main.command(name="unlink")
 @click.argument("source_id", type=int)
 @click.argument("target_id", type=int)
-def unlink_cmd(source_id, target_id):
+@click.pass_context
+def unlink_cmd(ctx, source_id, target_id):
     """Remove all links between two issues.
 
     \b
     Examples:
       yait unlink 3 5
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     # Check both issues exist
     source = _load_or_exit(root, source_id)
@@ -1788,7 +1905,7 @@ def unlink_cmd(source_id, target_id):
     with YaitLock(root, "unlink"):
         remove_link(root, source_id, target_id)
         click.echo(f"Unlinked #{source_id} and #{target_id}")
-        git_commit(root, f"yait: unlink #{source_id} and #{target_id}")
+        _commit(ctx, root, f"yait: unlink #{source_id} and #{target_id}")
 
 
 # ── bulk ───────────────────────────────────────────────────
@@ -1890,7 +2007,8 @@ def bulk_label():
 @click.argument("name")
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_label_add(name, ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_label_add(ctx, name, ids, filter_status, filter_type, filter_priority,
                    filter_label, filter_assignee, filter_milestone):
     """Add a label to multiple issues.
 
@@ -1899,7 +2017,7 @@ def bulk_label_add(name, ids, filter_status, filter_type, filter_priority,
       yait bulk label add urgent 1 2 3 4 5
       yait bulk label add release-blocker --filter-priority p0 --filter-status open
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -1922,7 +2040,7 @@ def bulk_label_add(name, ids, filter_status, filter_type, filter_priority,
             issue.labels.append(name)
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk label #{issue_id} +{name}")
+            _commit(ctx, root, f"yait: bulk label #{issue_id} +{name}")
             updated += 1
     _bulk_summary(updated, failed, skipped)
 
@@ -1931,7 +2049,8 @@ def bulk_label_add(name, ids, filter_status, filter_type, filter_priority,
 @click.argument("name")
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_label_remove(name, ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_label_remove(ctx, name, ids, filter_status, filter_type, filter_priority,
                       filter_label, filter_assignee, filter_milestone):
     """Remove a label from multiple issues.
 
@@ -1940,7 +2059,7 @@ def bulk_label_remove(name, ids, filter_status, filter_type, filter_priority,
       yait bulk label remove urgent 1 2 3
       yait bulk label remove urgent --filter-status open
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -1963,7 +2082,7 @@ def bulk_label_remove(name, ids, filter_status, filter_type, filter_priority,
             issue.labels.remove(name)
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk label #{issue_id} -{name}")
+            _commit(ctx, root, f"yait: bulk label #{issue_id} -{name}")
             updated += 1
     _bulk_summary(updated, failed, skipped)
 
@@ -1974,7 +2093,8 @@ def bulk_label_remove(name, ids, filter_status, filter_type, filter_priority,
 @click.argument("name")
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_assign(name, ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_assign(ctx, name, ids, filter_status, filter_type, filter_priority,
                 filter_label, filter_assignee, filter_milestone):
     """Assign multiple issues to someone.
 
@@ -1983,7 +2103,7 @@ def bulk_assign(name, ids, filter_status, filter_type, filter_priority,
       yait bulk assign alice 1 2 3
       yait bulk assign alice --filter-milestone v1.0 --filter-status open
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -2001,7 +2121,7 @@ def bulk_assign(name, ids, filter_status, filter_type, filter_priority,
             issue.assignee = name
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk assign #{issue_id} to {name}")
+            _commit(ctx, root, f"yait: bulk assign #{issue_id} to {name}")
             updated += 1
     _bulk_summary(updated, failed)
 
@@ -2009,7 +2129,8 @@ def bulk_assign(name, ids, filter_status, filter_type, filter_priority,
 @bulk.command(name="unassign")
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_unassign(ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_unassign(ctx, ids, filter_status, filter_type, filter_priority,
                   filter_label, filter_assignee, filter_milestone):
     """Remove assignee from multiple issues.
 
@@ -2018,7 +2139,7 @@ def bulk_unassign(ids, filter_status, filter_type, filter_priority,
       yait bulk unassign 1 2 3
       yait bulk unassign --filter-status open --filter-assignee alice
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -2036,7 +2157,7 @@ def bulk_unassign(ids, filter_status, filter_type, filter_priority,
             issue.assignee = None
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk unassign #{issue_id}")
+            _commit(ctx, root, f"yait: bulk unassign #{issue_id}")
             updated += 1
     _bulk_summary(updated, failed)
 
@@ -2047,7 +2168,8 @@ def bulk_unassign(ids, filter_status, filter_type, filter_priority,
 @click.argument("value", type=click.Choice(PRIORITIES))
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_priority(value, ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_priority(ctx, value, ids, filter_status, filter_type, filter_priority,
                   filter_label, filter_assignee, filter_milestone):
     """Set priority on multiple issues.
 
@@ -2056,7 +2178,7 @@ def bulk_priority(value, ids, filter_status, filter_type, filter_priority,
       yait bulk priority p0 1 2 3
       yait bulk priority p1 --filter-type bug --filter-status open
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -2074,7 +2196,7 @@ def bulk_priority(value, ids, filter_status, filter_type, filter_priority,
             issue.priority = value
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk priority #{issue_id} -> {value}")
+            _commit(ctx, root, f"yait: bulk priority #{issue_id} -> {value}")
             updated += 1
     _bulk_summary(updated, failed)
 
@@ -2085,7 +2207,8 @@ def bulk_priority(value, ids, filter_status, filter_type, filter_priority,
 @click.argument("value")
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_milestone(value, ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_milestone(ctx, value, ids, filter_status, filter_type, filter_priority,
                    filter_label, filter_assignee, filter_milestone):
     """Set milestone on multiple issues.
 
@@ -2094,7 +2217,7 @@ def bulk_milestone(value, ids, filter_status, filter_type, filter_priority,
       yait bulk milestone v1.0 1 2 3
       yait bulk milestone v2.0 --filter-label deferred
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -2112,7 +2235,7 @@ def bulk_milestone(value, ids, filter_status, filter_type, filter_priority,
             issue.milestone = value
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk milestone #{issue_id} -> {value}")
+            _commit(ctx, root, f"yait: bulk milestone #{issue_id} -> {value}")
             updated += 1
     _bulk_summary(updated, failed)
 
@@ -2123,7 +2246,8 @@ def bulk_milestone(value, ids, filter_status, filter_type, filter_priority,
 @click.argument("value", type=click.Choice(ISSUE_TYPES))
 @click.argument("ids", nargs=-1, type=int)
 @bulk_filter_options
-def bulk_type(value, ids, filter_status, filter_type, filter_priority,
+@click.pass_context
+def bulk_type(ctx, value, ids, filter_status, filter_type, filter_priority,
               filter_label, filter_assignee, filter_milestone):
     """Set type on multiple issues.
 
@@ -2132,7 +2256,7 @@ def bulk_type(value, ids, filter_status, filter_type, filter_priority,
       yait bulk type bug 1 2 3
       yait bulk type enhancement --filter-label improvement
     """
-    root = _root()
+    root = _resolve(ctx)
     _require_init(root)
     pairs = _resolve_bulk_issues(root, ids,
         filter_status=filter_status, filter_type=filter_type,
@@ -2150,6 +2274,6 @@ def bulk_type(value, ids, filter_status, filter_type, filter_priority,
             issue.type = value
             issue.updated_at = _now()
             save_issue(root, issue)
-            git_commit(root, f"yait: bulk type #{issue_id} -> {value}")
+            _commit(ctx, root, f"yait: bulk type #{issue_id} -> {value}")
             updated += 1
     _bulk_summary(updated, failed)
