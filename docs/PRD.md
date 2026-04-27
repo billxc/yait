@@ -1,7 +1,7 @@
 # PRD: yait — Yet Another Issue Tracker
 
-**Version:** 0.6.0
-**Date:** 2026-04-26
+**Version:** 0.7.0
+**Date:** 2026-04-27
 **Status:** Active
 
 ---
@@ -50,12 +50,18 @@ yait is a local issue tracker built on markdown files and git. Each issue is a m
 17. **Design docs**: I run `yait doc create auth-prd --title "Auth PRD"` to manage design documents linked to issues.
 18. **Configuration**: I run `yait config set defaults.type bug` to customize defaults.
 19. **Export/Import**: I run `yait export --format json` or `yait import data.json` for data portability.
+20. **Cross-folder project**: I run `yait -P myapp list` to manage issues from any directory without `cd`.
+21. **Create named project**: I run `yait project create myapp` to create a named project stored in `~/.yait/projects/`.
+22. **Import local project**: I run `yait project import myapp` to import an existing local `.yait/` as a named project.
+23. **List projects**: I run `yait project list` to see all named projects with their issue counts.
 
 ---
 
 ## Data Model
 
 ### Directory Structure
+
+**Local mode (default):**
 
 ```
 project-root/
@@ -71,6 +77,21 @@ project-root/
     └── docs/
         ├── auth-prd.md
         └── auth-tech-spec.md
+```
+
+**Named project mode (`--project` / `-P`):**
+
+```
+~/.yait/                          # overrideable via YAIT_HOME
+└── projects/
+    └── myapp/                    # self-contained, flat layout
+        ├── .git/                 # per-project git repo
+        ├── .gitignore            # contains: yait.lock
+        ├── config.yaml
+        ├── yait.lock
+        ├── issues/
+        ├── templates/
+        └── docs/
 ```
 
 ### config.yaml
@@ -242,6 +263,21 @@ Entry command: `yait`
 | `yait export [--format json\|csv]` | Export issues |
 | `yait import <file>` | Import issues from JSON |
 
+### Project Management
+
+| Command | Description |
+|---------|-------------|
+| `yait project create <name>` | Create a named project (with git init) |
+| `yait project list [--json]` | List all named projects with stats |
+| `yait project delete <name> [-f]` | Delete a named project |
+| `yait project rename <old> <new>` | Rename a project |
+| `yait project import <name> [--path DIR] [--move]` | Import local .yait/ as named project |
+| `yait project path <name> [--check]` | Print the data directory path |
+
+**Global option:** `--project / -P <name>` — select a named project for any command.
+
+**Environment variables:** `YAIT_PROJECT` (default project name), `YAIT_HOME` (override `~/.yait/` location).
+
 ---
 
 ## Technical Design
@@ -284,6 +320,7 @@ yet-another-issue-tracker/
     ├── test_links_cli.py
     ├── test_output_format.py
     ├── test_lock.py
+    ├── test_project.py
     └── test_security.py
 ```
 
@@ -347,6 +384,17 @@ yet-another-issue-tracker/
 - Cross-platform (no `fcntl` dependency)
 - All write CLI commands wrapped with `YaitLock` context manager
 
+### v0.7 — Cross-Folder Projects (`--project` flag) ✅
+
+- `--project / -P` global flag to select named projects stored under `~/.yait/projects/`
+- `YAIT_PROJECT` env var for session-level default project
+- `YAIT_HOME` env var to override `~/.yait/` location
+- `yait project` subcommand group: `create/list/delete/rename/import/path`
+- Per-project git repo with isolated history
+- Full backward compatibility — local `.yait/` in cwd still works unchanged
+- `yait -P <name> init` delegates to `project create`
+- 440 automated tests (46 new for project features)
+
 ---
 
 ## Error Handling
@@ -365,8 +413,9 @@ yet-another-issue-tracker/
 
 ## Acceptance Criteria
 
-v0.5.0 is complete when all features above are implemented and:
+v0.7.0 is complete when all features above are implemented and:
 
-- 394 automated tests passing
-- All v0.3.x data is readable without migration
+- 440 automated tests passing
+- All v0.6.x data is readable without migration
+- Local `.yait/` mode works unchanged (full backward compat)
 - All new commands documented and tested
