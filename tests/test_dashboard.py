@@ -134,8 +134,10 @@ class TestGenerateDashboard:
             type="bug", priority="p0", created_at="2026-04-01",
         ))
         result = generate_dashboard(root)
-        assert "<script>" not in result
+        # The literal XSS payload should be escaped in HTML table output
         assert "&lt;script&gt;" in result
+        # Unescaped XSS title should not appear in the HTML (outside JSON)
+        assert '<script>alert("xss")</script>' not in result
 
     def test_xss_in_project_name(self, initialized_root: Path):
         result = generate_dashboard(initialized_root, project_name='<img onerror="alert(1)">')
@@ -160,10 +162,12 @@ class TestGenerateDashboard:
                 created_at="2026-04-01", updated_at=f"2026-04-{n+1:02d}",
             ))
         result = generate_dashboard(root)
-        # Recently closed should have at most 10 rows
-        assert result.count("Closed issue") == 10
+        # Recently closed table rows have onclick="showIssue(...)" — count those
+        # The table section should have at most 10 issue entries
+        recently_section = result.split("Recently Closed")[1].split("</section>")[0]
+        assert recently_section.count("Closed issue") == 10
         # Most recent should be there (updated 2026-04-15)
-        assert "Closed issue 14" in result
+        assert "Closed issue 14" in recently_section
 
     def test_import(self):
         """Verify the public API can be imported."""
@@ -188,6 +192,94 @@ class TestEscapeHelper:
 
     def test_plain_text_unchanged(self):
         assert _esc("hello world") == "hello world"
+
+
+# --- Interactive dashboard tests ---
+
+class TestInteractiveDashboard:
+    """Tests for interactive dashboard features."""
+
+    def test_modal_container_exists(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "modal-overlay" in result
+
+    def test_issue_json_embedded(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "const ISSUES=" in result
+
+    def test_issue_json_xss_safe(self, initialized_root: Path):
+        root = initialized_root
+        save_issue(root, Issue(
+            id=next_id(root), title='</script><script>alert(1)</script>',
+            status="open", type="bug", priority="p0", created_at="2026-04-01",
+        ))
+        result = generate_dashboard(root)
+        # </script> must be escaped in JSON embedding
+        assert "</script><script>" not in result
+        assert r"<\/script>" in result
+
+    def test_table_rows_data_attributes(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert 'data-type="bug"' in result
+        assert 'data-priority="p0"' in result
+        assert 'data-assignee="alice"' in result
+
+    def test_table_rows_clickable(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "showIssue(" in result
+
+    def test_filter_bar_exists(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "filter-search" in result
+        assert "filter-type" in result
+        assert "filter-priority" in result
+        assert "filter-assignee" in result
+        assert "applyFilters()" in result
+
+    def test_milestone_accordion(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "accordion-toggle" in result
+        assert "toggleAccordion" in result
+
+    def test_keyboard_js(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "keydown" in result
+        assert "ArrowLeft" in result
+        assert "ArrowRight" in result
+        assert "Escape" in result
+
+    def test_commands_section(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "commands-section" in result
+        assert "yait" in result
+        assert "Quick Commands" in result
+
+    def test_commands_with_project(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root, project_name="myproj")
+        assert "const PROJECT_NAME=" in result
+        assert "myproj" in result
+        # JS will use -P prefix when PROJECT_NAME is set
+        assert "-P " in result
+
+    def test_copy_function_js(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "copyCmd" in result
+        assert "navigator.clipboard.writeText" in result
+        assert "Copied!" in result
+
+    def test_workflow_statuses_in_commands(self, dashboard_root: Path):
+        result = generate_dashboard(dashboard_root)
+        assert "const WORKFLOW=" in result
+        # JS buildCommands iterates WORKFLOW.statuses to generate status commands
+
+    def test_empty_project_interactive(self, initialized_root: Path):
+        result = generate_dashboard(initialized_root)
+        assert "<!DOCTYPE html>" in result
+        assert "modal-overlay" in result
+        assert "const ISSUES=[]" in result
+        assert "No open issues" in result
+        assert "No closed issues" in result
+        assert "No open milestones" in result
 
 
 # --- CLI tests (from feat/dashboard-cli) ---
