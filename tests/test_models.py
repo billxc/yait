@@ -188,3 +188,13 @@ class TestMilestoneDataclass:
         m = Milestone(name="v1.0", due_date="01-06-2026")
         with pytest.raises(ValueError, match="Invalid due_date format"):
             m.validate_due_date()
+
+
+class TestDefaultStatusConstants:
+    def test_default_statuses_exists(self):
+        from yait.models import DEFAULT_STATUSES
+        assert DEFAULT_STATUSES == ("open", "closed")
+
+    def test_default_closed_statuses_exists(self):
+        from yait.models import DEFAULT_CLOSED_STATUSES
+        assert DEFAULT_CLOSED_STATUSES == ("closed",)

@@ -675,3 +675,111 @@ def test_issue_path_no_isdigit_check(initialized_root: Path):
     # Negative int rejected
     with pytest.raises(ValueError, match="Invalid issue ID"):
         _issue_path(initialized_root, -1)
+
+
+# ---------------------------------------------------------------------------
+# Workflow engine tests
+# ---------------------------------------------------------------------------
+
+from yait.store import get_workflow, resolve_status_filter, validate_status
+
+
+class TestWorkflow:
+    def test_get_workflow_default(self, initialized_root: Path):
+        """Without config, get_workflow returns default open/closed."""
+        wf = get_workflow(initialized_root)
+        assert wf["statuses"] == ["open", "closed"]
+        assert wf["closed_statuses"] == ["closed"]
+
+    def test_get_workflow_custom(self, initialized_root: Path):
+        """Custom workflow config is read from config.yaml."""
+        cfg = yaml.safe_load((initialized_root / "config.yaml").read_text())
+        cfg["workflow"] = {
+            "statuses": ["backlog", "ready", "in-progress", "in-review", "done", "archive"],
+            "closed_statuses": ["done", "archive"],
+        }
+        (initialized_root / "config.yaml").write_text(yaml.dump(cfg, default_flow_style=False))
+        wf = get_workflow(initialized_root)
+        assert wf["statuses"] == ["backlog", "ready", "in-progress", "in-review", "done", "archive"]
+        assert wf["closed_statuses"] == ["done", "archive"]
+
+    def test_resolve_status_filter_default_open(self, initialized_root: Path):
+        """Default workflow: 'open' resolves to ['open']."""
+        result = resolve_status_filter(initialized_root, "open")
+        assert result == ["open"]
+
+    def test_resolve_status_filter_default_closed(self, initialized_root: Path):
+        """Default workflow: 'closed' resolves to ['closed']."""
+        result = resolve_status_filter(initialized_root, "closed")
+        assert result == ["closed"]
+
+    def test_resolve_status_filter_all(self, initialized_root: Path):
+        """'all' resolves to None (no filter)."""
+        result = resolve_status_filter(initialized_root, "all")
+        assert result is None
+
+    def test_resolve_status_filter_extended_open(self, initialized_root: Path):
+        """Extended workflow: 'open' resolves to all non-closed statuses."""
+        cfg = yaml.safe_load((initialized_root / "config.yaml").read_text())
+        cfg["workflow"] = {
+            "statuses": ["backlog", "ready", "in-progress", "in-review", "done", "archive"],
+            "closed_statuses": ["done", "archive"],
+        }
+        (initialized_root / "config.yaml").write_text(yaml.dump(cfg, default_flow_style=False))
+        result = resolve_status_filter(initialized_root, "open")
+        assert result == ["backlog", "ready", "in-progress", "in-review"]
+
+    def test_resolve_status_filter_extended_closed(self, initialized_root: Path):
+        """Extended workflow: 'closed' resolves to closed statuses."""
+        cfg = yaml.safe_load((initialized_root / "config.yaml").read_text())
+        cfg["workflow"] = {
+            "statuses": ["backlog", "ready", "in-progress", "in-review", "done", "archive"],
+            "closed_statuses": ["done", "archive"],
+        }
+        (initialized_root / "config.yaml").write_text(yaml.dump(cfg, default_flow_style=False))
+        result = resolve_status_filter(initialized_root, "closed")
+        assert result == ["done", "archive"]
+
+    def test_resolve_status_filter_specific(self, initialized_root: Path):
+        """Extended workflow: specific status resolves to itself."""
+        cfg = yaml.safe_load((initialized_root / "config.yaml").read_text())
+        cfg["workflow"] = {
+            "statuses": ["backlog", "ready", "in-progress", "in-review", "done", "archive"],
+            "closed_statuses": ["done", "archive"],
+        }
+        (initialized_root / "config.yaml").write_text(yaml.dump(cfg, default_flow_style=False))
+        result = resolve_status_filter(initialized_root, "in-progress")
+        assert result == ["in-progress"]
+
+    def test_resolve_status_filter_invalid(self, initialized_root: Path):
+        """Invalid status raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown status"):
+            resolve_status_filter(initialized_root, "nonexistent")
+
+    def test_validate_status_valid(self, initialized_root: Path):
+        """Valid status does not raise."""
+        validate_status(initialized_root, "open")
+        validate_status(initialized_root, "closed")
+
+    def test_validate_status_invalid(self, initialized_root: Path):
+        """Invalid status raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid status"):
+            validate_status(initialized_root, "in-progress")
+
+    def test_list_issues_status_list(self, initialized_root: Path):
+        """list_issues with status_list filters by multiple statuses."""
+        save_issue(initialized_root, Issue(id=1, title="A", status="open"))
+        save_issue(initialized_root, Issue(id=2, title="B", status="closed"))
+        save_issue(initialized_root, Issue(id=3, title="C", status="in-progress"))
+        save_issue(initialized_root, Issue(id=4, title="D", status="in-review"))
+        result = list_issues(initialized_root, status_list=["open", "in-progress"])
+        assert {i.id for i in result} == {1, 3}
+
+    def test_list_issues_backward_compat(self, initialized_root: Path):
+        """list_issues with status= (old API) still works as before."""
+        save_issue(initialized_root, Issue(id=1, title="A", status="open"))
+        save_issue(initialized_root, Issue(id=2, title="B", status="closed"))
+        save_issue(initialized_root, Issue(id=3, title="C", status="open"))
+        result = list_issues(initialized_root, status="open")
+        assert len(result) == 2
+        assert all(i.status == "open" for i in result)
