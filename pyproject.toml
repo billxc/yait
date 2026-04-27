@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yait"
-version = "0.6.0"
+version = "0.7.0"
 description = "Yet Another Issue Tracker — markdown + git"
 requires-python = ">=3.10"
 dependencies = ["click>=8.0", "pyyaml>=6.0"]
