@@ -10,7 +10,6 @@ import yaml
 
 from .models import Issue, Milestone, Template, Doc, LINK_TYPES, LINK_REVERSE
 
-YAIT_DIR = ".yait"
 ISSUES_DIR = "issues"
 TEMPLATES_DIR = "templates"
 CONFIG_FILE = "config.yaml"
@@ -29,24 +28,20 @@ _DEFAULT_DISPLAY = {
 }
 
 
-def _yait_root(root: Path) -> Path:
-    return root
-
-
 def _issues_dir(root: Path) -> Path:
-    return _yait_root(root) / ISSUES_DIR
+    return root / ISSUES_DIR
 
 
 def _templates_dir(root: Path) -> Path:
-    return _yait_root(root) / TEMPLATES_DIR
+    return root / TEMPLATES_DIR
 
 
 def _config_path(root: Path) -> Path:
-    return _yait_root(root) / CONFIG_FILE
+    return root / CONFIG_FILE
 
 
 def _docs_dir(root: Path) -> Path:
-    return _yait_root(root) / "docs"
+    return root / "docs"
 
 
 def init_store(root: Path) -> None:
@@ -194,10 +189,9 @@ def next_id(root: Path) -> int:
 
 
 def _issue_path(root: Path, issue_id: int) -> Path:
-    sid = str(issue_id)
-    if not sid.isdigit():
+    if not isinstance(issue_id, int) or issue_id < 0:
         raise ValueError(f"Invalid issue ID: {issue_id!r}")
-    return _issues_dir(root) / f"{sid}.md"
+    return _issues_dir(root) / f"{issue_id}.md"
 
 
 def save_issue(root: Path, issue: Issue) -> None:
