@@ -2,7 +2,7 @@
 
 A local issue tracker built on markdown files and git. Every issue is a `.md` file with YAML frontmatter; all changes are automatically committed to git history.
 
-**v0.6.0** — milestones, bulk editing, templates, design docs, issue linking, concurrency lock, and more.
+**v0.7.0** — cross-folder projects (`--project` / `-P`), milestones, bulk editing, templates, design docs, issue linking, concurrency lock, and more.
 
 ## Install
 
@@ -51,6 +51,28 @@ yait stats
 yait stats --by milestone --json
 ```
 
+### Cross-Folder Usage (v0.7.0)
+
+Use `--project / -P` to manage issues from any directory without `cd`:
+
+```bash
+# Create a named project (stored in ~/.yait/projects/)
+yait project create myapp
+
+# Work from anywhere
+yait -P myapp new "Fix memory leak" -t bug -p p0
+yait -P myapp list --status open
+yait -P myapp close 3
+
+# Set a session default
+export YAIT_PROJECT=myapp
+yait list   # uses myapp automatically
+
+# Import an existing local .yait/ project
+cd ~/code/myapp
+yait project import myapp
+```
+
 ## Features
 
 | Category | Features |
@@ -64,27 +86,28 @@ yait stats --by milestone --json
 | **Templates** | `template create/list/delete`, `new --template` |
 | **Design Docs** | `doc create/show/list/edit/delete/link/unlink` |
 | **Issue Linking** | `link` (blocks/depends-on/relates-to), `unlink` |
+| **Project Management** | `--project / -P` flag, `project create/list/delete/rename/import/path`, `YAIT_PROJECT` / `YAIT_HOME` env vars |
 | **Config** | `config set/reset` for defaults (type, priority, assignee) and display settings |
 | **Output Formats** | `--compact`, `--wide`, auto-detect terminal width, `--json` |
 | **Import/Export** | `export --format json/csv`, `import` from JSON |
 | **History** | `log` — git-based change history per issue |
-| **Concurrency** | Multi-process safe via `.yait/yait.lock` global lock on all write ops; auto-recovers from crashes (PID check + 60s timeout) |
+| **Concurrency** | Multi-process safe via `yait.lock` global lock on all write ops; auto-recovers from crashes (PID check + 60s timeout) |
 
 ## Command Reference
 
 ### Core
 
 ```bash
-yait init                              # Initialize .yait/ in current repo
-yait new "Title" [options]             # Create issue
-yait show <id> [--json]                # Show issue details
-yait close <id> [id...]                # Close issue(s)
-yait reopen <id> [id...]               # Reopen issue(s)
-yait delete <id> [-f]                  # Delete issue permanently
-yait edit <id> [options]               # Edit inline or open $EDITOR
-yait comment <id> -m "text"            # Add comment
-yait assign <id> <name>                # Assign issue
-yait unassign <id>                     # Remove assignee
+yait [-P <project>] init               # Initialize .yait/ in cwd, or create named project with -P
+yait [-P <project>] new "Title" [opts]  # Create issue
+yait [-P <project>] show <id> [--json]  # Show issue details
+yait [-P <project>] close <id> [id...]  # Close issue(s)
+yait [-P <project>] reopen <id> [id...] # Reopen issue(s)
+yait [-P <project>] delete <id> [-f]    # Delete issue permanently
+yait [-P <project>] edit <id> [opts]    # Edit inline or open $EDITOR
+yait [-P <project>] comment <id> -m "text"  # Add comment
+yait [-P <project>] assign <id> <name>  # Assign issue
+yait [-P <project>] unassign <id>       # Remove assignee
 ```
 
 **`new` options:** `--title`, `--type/-t`, `--priority/-p`, `--label/-l` (repeatable), `--assign/-a`, `--body/-b` (`-` for stdin), `--body-file`, `--milestone/-m`, `--template`
@@ -195,6 +218,35 @@ yait import issues.json
 yait log [<id>] [-n 20]     # Git-based change log
 ```
 
+### Project Management
+
+```bash
+yait project create <name>               # Create a named project (with git init)
+yait project list [--json]               # List all named projects with stats
+yait project delete <name> [-f]          # Delete a named project
+yait project rename <old> <new>          # Rename a project
+yait project import <name> [--path DIR]  # Import local .yait/ as named project
+                           [--move]
+yait project path <name> [--check]       # Print the data directory path
+```
+
+All existing commands accept `-P <project>` to operate on a named project:
+
+```bash
+yait -P myapp list --type bug
+yait -P myapp stats --by milestone --json
+yait -P myapp bulk assign alice --filter-status open
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `YAIT_PROJECT` | (unset) | Default project name, equivalent to `-P` |
+| `YAIT_HOME` | `~/.yait` | Location of global yait directory |
+
+Resolution order: `--project` flag > `YAIT_PROJECT` env > local `.yait/` in cwd.
+
 ## Issue Types
 
 | Type | Use case |
@@ -210,6 +262,8 @@ yait log [<id>] [-n 20]     # Git-based change log
 
 ## Data Format
 
+### Local mode (default)
+
 ```
 project-root/
 └── .yait/
@@ -223,6 +277,25 @@ project-root/
     │   └── ...
     └── docs/
         ├── auth-prd.md
+        └── ...
+```
+
+### Named project mode (`--project` / `-P`)
+
+```
+~/.yait/                             # overrideable via YAIT_HOME
+└── projects/
+    ├── myapp/                       # self-contained, flat layout
+    │   ├── .git/                    # per-project git repo
+    │   ├── .gitignore               # contains: yait.lock
+    │   ├── config.yaml
+    │   ├── yait.lock
+    │   ├── issues/
+    │   │   ├── 1.md
+    │   │   └── ...
+    │   ├── templates/
+    │   └── docs/
+    └── infra/
         └── ...
 ```
 
