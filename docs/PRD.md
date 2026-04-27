@@ -54,6 +54,7 @@ yait is a local issue tracker built on markdown files and git. Each issue is a m
 21. **Create named project**: I run `yait project create myapp` to create a named project stored in `~/.yait/projects/`.
 22. **Import local project**: I run `yait project import myapp` to import an existing local `.yait/` as a named project.
 23. **List projects**: I run `yait project list` to see all named projects with their issue counts.
+24. **Dashboard**: I run `yait dashboard` to generate a local HTML dashboard showing summary cards, breakdowns, milestone progress, and issue tables.
 
 ---
 
@@ -263,6 +264,21 @@ Entry command: `yait`
 | `yait export [--format json\|csv]` | Export issues |
 | `yait import <file>` | Import issues from JSON |
 
+### Dashboard
+
+| Command | Description |
+|---------|-------------|
+| `yait dashboard` | Generate local HTML dashboard and open in browser |
+| `yait dashboard --no-open` | Generate without opening browser |
+| `yait dashboard -o PATH` | Custom output file path |
+
+Dashboard contents:
+- **Summary cards** — Total, Open, Closed, Close Rate
+- **Breakdown by type and priority** — issue counts per category
+- **Milestone progress** — progress bars for each milestone
+- **Open issues table** — sortable list of all open issues
+- **Recently closed issues** — last closed issues for quick reference
+
 ### Project Management
 
 | Command | Description |
@@ -306,6 +322,7 @@ yet-another-issue-tracker/
 │       ├── models.py       # Issue, Milestone, Doc, Template dataclasses
 │       ├── store.py        # file I/O + config + milestones + templates + docs
 │       ├── lock.py         # global lockfile for concurrent write protection
+│       ├── dashboard.py    # HTML dashboard generation
 │       └── git_ops.py      # git operations
 └── tests/
     ├── conftest.py

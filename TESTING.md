@@ -61,6 +61,13 @@ uv run pytest tests/ --cov=yait -v
 |---|---|---|---|---|
 | Project management (--project, project create/list/delete/rename/import/path, YAIT_PROJECT) | `cli.py`, `store.py`, `git_ops.py`, `lock.py` | `test_project.py` | 46 | Pass |
 
+### Dashboard
+
+| Feature | Module | Test File | Tests | Status |
+|---|---|---|---|---|
+| Dashboard HTML generation (summary cards, breakdowns, milestone progress, issue tables) | `dashboard.py` | `test_dashboard.py` | TBD | Pending |
+| Dashboard CLI (generate, --no-open, -o PATH) | `cli.py` | `test_dashboard.py` | TBD | Pending |
+
 **Total: 440 tests across 13 test modules**
 
 ## Test Categories
@@ -77,6 +84,7 @@ uv run pytest tests/ --cov=yait -v
 - **test_output_format.py** (25 tests) — Output formatting (compact/wide/auto) tests.
 - **test_lock.py** (12 tests) — Concurrency lock: acquire/release, stale detection, timeout, contention.
 - **test_project.py** (46 tests) — Project management: create/list/delete/rename/import/path, --project flag, YAIT_PROJECT env var, resolution logic, backward compat.
+- **test_dashboard.py** (TBD) — Dashboard HTML generation and CLI tests: summary cards, type/priority breakdowns, milestone progress, open/closed issue tables, --no-open flag, -o output path.
 - **test_security.py** (12 tests) — Input validation and security edge cases.
 
 ## Shared Fixtures (`conftest.py`)
@@ -165,6 +173,17 @@ yait config reset defaults.type
 yait list --compact
 yait list --wide
 # Auto-detect: adapts to terminal width
+```
+
+### 10. Dashboard
+
+```bash
+yait dashboard
+# Expected: generates .yait/dashboard.html and opens in browser
+yait dashboard --no-open
+# Expected: generates file without opening browser
+yait dashboard -o /tmp/report.html
+# Expected: generates at custom path
 ```
 
 ## Known Limitations
