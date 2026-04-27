@@ -882,6 +882,7 @@ yait list --doc auth-prd
 | T16 | 输出格式化改进 (truncation, compact/wide) | P2 | T14 | ✅ Done |
 | T17 | 测试套件更新 (所有新功能) | 贯穿 | 各任务 | ✅ Done (382 tests) |
 | T18 | README + PRD 文档更新 | 收尾 | 全部 | ✅ Done |
+| T19 | 并发锁 — 全局 lockfile (.yait/yait.lock) + PID/时间戳 stale 检测 | P1 | — | ✅ Done (v0.6.0) |
 
 **Size 说明**: S=半天, M=1天, L=2天
 
