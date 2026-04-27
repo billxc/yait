@@ -1,6 +1,6 @@
 # PRD: yait — Yet Another Issue Tracker
 
-**Version:** 0.5.0
+**Version:** 0.6.0
 **Date:** 2026-04-26
 **Status:** Active
 
@@ -269,6 +269,7 @@ yet-another-issue-tracker/
 │       ├── cli.py          # click CLI entry (all commands)
 │       ├── models.py       # Issue, Milestone, Doc, Template dataclasses
 │       ├── store.py        # file I/O + config + milestones + templates + docs
+│       ├── lock.py         # global lockfile for concurrent write protection
 │       └── git_ops.py      # git operations
 └── tests/
     ├── conftest.py
@@ -282,6 +283,7 @@ yet-another-issue-tracker/
     ├── test_links.py
     ├── test_links_cli.py
     ├── test_output_format.py
+    ├── test_lock.py
     └── test_security.py
 ```
 
@@ -338,6 +340,13 @@ yet-another-issue-tracker/
 - Web UI
 - Performance optimization (indexing for 1000+ issues)
 
+### v0.6 — Concurrency Safety ✅
+
+- Global lockfile (`.yait/yait.lock`) for concurrent write protection
+- PID + timestamp stale lock detection with exponential backoff retry
+- Cross-platform (no `fcntl` dependency)
+- All write CLI commands wrapped with `YaitLock` context manager
+
 ---
 
 ## Error Handling
@@ -358,6 +367,6 @@ yet-another-issue-tracker/
 
 v0.5.0 is complete when all features above are implemented and:
 
-- 382 automated tests passing
+- 394 automated tests passing
 - All v0.3.x data is readable without migration
 - All new commands documented and tested
