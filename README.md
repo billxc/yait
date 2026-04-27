@@ -2,7 +2,7 @@
 
 A local issue tracker built on markdown files and git. Every issue is a `.md` file with YAML frontmatter; all changes are automatically committed to git history.
 
-**v0.5.0** — milestones, bulk editing, templates, design docs, issue linking, and more.
+**v0.6.0** — milestones, bulk editing, templates, design docs, issue linking, concurrency lock, and more.
 
 ## Install
 
