@@ -331,6 +331,10 @@ Each named project is its own git repo. `git_commit` in project mode:
 
 Works within the project's own git repo. Shows history scoped to that project.
 
+The `log` command (cli.py:1366-1378) currently uses hardcoded paths like `.yait/issues/{id}.md` and `.yait/`. After the refactor:
+- **Local mode:** git root = `data_dir.parent`, path = `.yait/issues/{id}.md` (unchanged)
+- **Project mode:** git root = `data_dir`, path = `issues/{id}.md`
+
 ---
 
 ## 8. Concurrency
@@ -480,6 +484,7 @@ Since cli.py already passes the resolved data dir after the refactor, `YaitLock(
 | S4 | Add `--project` to `main` group + `_resolve()` | `cli.py` | 35 | S1 |
 | S5 | Update all 47 `_root()` call sites in cli.py | `cli.py` | 50 | S4 |
 | S6 | Update all 35 `git_commit()` call sites | `cli.py` | 35 | S2, S5 |
+| S6b | Update `log` command hardcoded `.yait/` paths (cli.py:1371-1374) | `cli.py` | 8 | S5 |
 | S7 | Add `project create` + `project list` commands | `cli.py` | 60 | S4 |
 | S8 | Add `project delete/rename/path` commands | `cli.py` | 40 | S7 |
 | S9 | Add `project import` with history warning | `cli.py` | 40 | S7 |
@@ -622,17 +627,18 @@ Existing users are not required to migrate. Local `.yait/` continues to work exa
 | E7 | Config per-project | No global config overrides (future) |
 | E8 | Export/import with `-P` | Works same as local mode |
 | E9 | `~/.yait/` doesn't exist | Created on first `project create` |
+| E10 | External doc refs in `show` (cli.py:531) | In local mode, `data_dir.parent / doc_ref` resolves correctly. In project mode, external refs have no local context — print "(external ref, not available in project mode)" |
 
 ### 12.2 From reviewer
 
 | # | Scenario | Behavior |
 |---|----------|----------|
-| E10 | `yait -P foo project list` | `project` subgroup ignores `-P`, lists all projects |
-| E11 | `project rename` breaks downstream | Warning message printed after rename |
-| E12 | `project import` loses git history | Warning printed; history remains in original repo |
-| E13 | `$YAIT_HOME` on shared system | Allows custom location for multi-agent setups |
-| E14 | Sensitive data in `~/.yait/` | Dir created with `0o700` permissions |
-| E15 | `project path --check` for scripting | Exit 1 if not found, exit 0 if found |
+| E11 | `yait -P foo project list` | `project` subgroup ignores `-P`, lists all projects |
+| E12 | `project rename` breaks downstream | Warning message printed after rename |
+| E13 | `project import` loses git history | Warning printed; history remains in original repo |
+| E14 | `$YAIT_HOME` on shared system | Allows custom location for multi-agent setups |
+| E15 | Sensitive data in `~/.yait/` | Dir created with `0o700` permissions |
+| E16 | `project path --check` for scripting | Exit 1 if not found, exit 0 if found |
 
 ---
 
