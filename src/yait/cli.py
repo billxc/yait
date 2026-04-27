@@ -26,6 +26,7 @@ from .store import (
     save_doc, load_doc, list_docs, delete_doc, _docs_dir,
     add_link, remove_link,
     get_defaults, get_display, set_config_value, reset_config_value,
+    get_workflow, _read_config, _write_config,
     _DEFAULT_DEFAULTS, _DEFAULT_DISPLAY,
 )
 
@@ -373,6 +374,7 @@ def config(ctx):
     _require_init(root)
     defaults = get_defaults(root)
     display = get_display(root)
+    workflow = get_workflow(root)
     click.echo(click.style("defaults:", bold=True))
     for k, v in sorted(defaults.items()):
         default_marker = ""
@@ -385,6 +387,9 @@ def config(ctx):
         if k in _DEFAULT_DISPLAY and display[k] == _DEFAULT_DISPLAY[k]:
             default_marker = " (default)"
         click.echo(f"  {k}: {_format_config_value(v)}{default_marker}")
+    click.echo(click.style("workflow:", bold=True))
+    for k, v in sorted(workflow.items()):
+        click.echo(f"  {k}: {_format_config_value(v)}")
 
 
 def _format_config_value(v) -> str:
@@ -410,14 +415,28 @@ def config_set(ctx, key, value):
       yait config set defaults.labels urgent,frontend
       yait config set display.max_title_width 60
       yait config set display.date_format full
+      yait config set workflow.statuses backlog,ready,in-progress,done,closed
+      yait config set workflow.closed_statuses closed,done
     """
     root = _resolve(ctx)
     _require_init(root)
     with YaitLock(root, "config set"):
-        try:
-            set_config_value(root, key, value)
-        except (KeyError, ValueError) as e:
-            raise click.ClickException(str(e))
+        # Handle workflow.* keys directly (store.py doesn't support them)
+        if key.startswith("workflow."):
+            field = key.split(".", 1)[1]
+            if field not in ("statuses", "closed_statuses"):
+                raise click.ClickException(f"Unknown config key: {key!r}")
+            converted = [v.strip() for v in value.split(",") if v.strip()]
+            cfg = _read_config(root)
+            if "workflow" not in cfg:
+                cfg["workflow"] = {}
+            cfg["workflow"][field] = converted
+            _write_config(root, cfg)
+        else:
+            try:
+                set_config_value(root, key, value)
+            except (KeyError, ValueError) as e:
+                raise click.ClickException(str(e))
         click.echo(f"Set {key} = {value}")
 
 
@@ -2544,3 +2563,46 @@ def project_path(name, check):
     if check and not project_dir.exists():
         raise SystemExit(1)
     click.echo(str(project_dir))
+
+
+# ── board ────────────────────────────────────────────────────
+
+
+@main.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def board(ctx, as_json):
+    """Show kanban board view.
+
+    \b
+    Displays issues grouped by workflow status columns.
+
+    \b
+    Examples:
+      yait board
+      yait board --json
+    """
+    from .board import render_board
+
+    root = _resolve(ctx)
+    _require_init(root)
+    wf = get_workflow(root)
+    issues = list_issues(root, status=None)
+    if as_json:
+        grouped = {}
+        for s in wf["statuses"]:
+            grouped[s] = [
+                i.to_dict() for i in issues if i.status == s
+            ]
+        click.echo(json.dumps(grouped, indent=2))
+    else:
+        try:
+            width = os.get_terminal_size().columns
+        except (ValueError, OSError):
+            width = 80
+        click.echo(render_board(issues, wf, width))
+
+
+# ── update (alias for edit) ──────────────────────────────────
+
+main.add_command(edit, name="update")
