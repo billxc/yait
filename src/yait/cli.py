@@ -1893,6 +1893,34 @@ def doc_unlink(ctx, id, doc_ref):
         _commit(ctx, root, f"yait: unlink doc '{doc_ref}' from #{id}")
 
 
+# ── dashboard ──────────────────────────────────────────────
+
+
+@main.command()
+@click.option("--output", "-o", default=None, help="Output HTML file path (default: dashboard.html in data dir)")
+@click.option("--no-open", is_flag=True, help="Don't open browser after generating")
+@click.pass_context
+def dashboard(ctx, output, no_open):
+    """Generate a local HTML dashboard."""
+    import webbrowser
+
+    from .dashboard import generate_dashboard
+
+    root = _resolve(ctx)
+    _require_init(root)
+
+    project_name = ctx.obj.get("project") or ""
+    html = generate_dashboard(root, project_name=project_name)
+
+    output_path = Path(output) if output else root / "dashboard.html"
+    output_path.write_text(html, encoding="utf-8")
+
+    if not no_open:
+        webbrowser.open(str(output_path))
+
+    click.echo(f"Dashboard generated: {output_path}")
+
+
 # ── link / unlink ──────────────────────────────────────────
 
 # Valid user-facing link types (excludes reverse-only types)
