@@ -5,7 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from yait.cli import main
-from yait.store import load_issue, load_milestone, list_milestones, save_template, load_template, list_templates
+from yait.store import load_issue, load_milestone, list_milestones, save_template, load_template, list_templates, ensure_next_id_above, _read_config
 
 
 @pytest.fixture
@@ -756,6 +756,69 @@ class TestImport:
         assert result.exit_code == 0
         assert "skipped 1" in result.output
         assert "Imported 1" in result.output
+
+    def test_import_roundtrip_docs_and_links(self, runner: CliRunner, initialized_cli, yait_root, tmp_path, monkeypatch):
+        """Export→import preserves docs and links fields."""
+        # Create issues with docs and links
+        runner.invoke(main, ["new", "Issue with docs"], catch_exceptions=False)
+        runner.invoke(main, ["new", "Linked issue"], catch_exceptions=False)
+        root = initialized_cli / ".yait"
+        issue1 = load_issue(root, 1)
+        issue1.docs = ["design-doc", "specs/api.md"]
+        issue1.links = [{"type": "blocks", "target": 2}]
+        from yait.store import save_issue
+        save_issue(root, issue1)
+        issue2 = load_issue(root, 2)
+        issue2.links = [{"type": "blocked-by", "target": 1}]
+        save_issue(root, issue2)
+
+        # Export
+        export_result = runner.invoke(main, ["export"], catch_exceptions=False)
+        assert export_result.exit_code == 0
+        export_data = export_result.output
+
+        # Import into a fresh repo
+        import subprocess
+        new_root = tmp_path / "roundtrip_test"
+        new_root.mkdir()
+        subprocess.run(["git", "init"], cwd=new_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=new_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=new_root, check=True, capture_output=True)
+        monkeypatch.chdir(new_root)
+        runner.invoke(main, ["init"], catch_exceptions=False)
+
+        import_file = tmp_path / "roundtrip.json"
+        import_file.write_text(export_data)
+        result = runner.invoke(main, ["import", str(import_file)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Imported 2" in result.output
+
+        new_yait = new_root / ".yait"
+        imported1 = load_issue(new_yait, 1)
+        assert imported1.docs == ["design-doc", "specs/api.md"]
+        assert imported1.links == [{"type": "blocks", "target": 2}]
+        imported2 = load_issue(new_yait, 2)
+        assert imported2.links == [{"type": "blocked-by", "target": 1}]
+
+    def test_import_updates_next_id(self, runner: CliRunner, initialized_cli, yait_root, tmp_path, monkeypatch):
+        """After import, next_id is above the highest imported issue ID."""
+        data = [
+            {"id": 10, "title": "High ID", "status": "open", "type": "bug",
+             "priority": "none", "labels": [], "assignee": None,
+             "created_at": "", "updated_at": "", "body": "", "docs": [], "links": []},
+            {"id": 5, "title": "Low ID", "status": "open", "type": "misc",
+             "priority": "none", "labels": [], "assignee": None,
+             "created_at": "", "updated_at": "", "body": "", "docs": [], "links": []},
+        ]
+        import_file = tmp_path / "ids.json"
+        import_file.write_text(json.dumps(data))
+        result = runner.invoke(main, ["import", str(import_file)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert "Imported 2" in result.output
+
+        root = initialized_cli / ".yait"
+        cfg = _read_config(root)
+        assert cfg["next_id"] >= 11
 
 
 # ---------------------------------------------------------------------------
