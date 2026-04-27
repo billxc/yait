@@ -1614,19 +1614,18 @@ def import_cmd(ctx, file):
                 created_at=item.get("created_at", ""),
                 updated_at=item.get("updated_at", ""),
                 body=item.get("body", ""),
+                docs=item.get("docs") or [],
+                links=item.get("links") or [],
             )
             save_issue(root, issue)
             imported += 1
 
         # Update next_id to be above the highest imported ID
         if imported > 0:
-            from .store import _read_config, _write_config
+            from .store import ensure_next_id_above
             all_issues = list_issues(root, status=None)
             max_id = max(i.id for i in all_issues)
-            cfg = _read_config(root)
-            if cfg["next_id"] <= max_id:
-                cfg["next_id"] = max_id + 1
-                _write_config(root, cfg)
+            ensure_next_id_above(root, max_id + 1)
             _commit(ctx, root, f"yait: import {imported} issues")
 
         click.echo(f"Imported {imported} issues, skipped {skipped}.")

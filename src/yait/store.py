@@ -193,6 +193,14 @@ def next_id(root: Path) -> int:
     return nid
 
 
+def ensure_next_id_above(root: Path, min_id: int) -> None:
+    """Ensure config next_id is at least *min_id*."""
+    cfg = _read_config(root)
+    if cfg["next_id"] < min_id:
+        cfg["next_id"] = min_id
+        _write_config(root, cfg)
+
+
 def _issue_path(root: Path, issue_id: int) -> Path:
     sid = str(issue_id)
     if not sid.isdigit():
