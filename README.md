@@ -214,6 +214,7 @@ yait log [<id>] [-n 20]     # Git-based change log
 project-root/
 └── .yait/
     ├── config.yaml          # next_id, milestones, defaults, display
+    ├── yait.lock            # global lock for concurrent write protection (transient, gitignored)
     ├── issues/
     │   ├── 1.md
     │   └── ...
