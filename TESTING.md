@@ -15,7 +15,7 @@ uv run pytest tests/ -v
 ## Running Tests
 
 ```bash
-# Run all tests (382 total)
+# Run all tests (394 total)
 uv run pytest tests/ -v
 
 # Run a specific test module
@@ -52,9 +52,10 @@ uv run pytest tests/ --cov=yait -v
 | Issue linking data model + store | `store.py` | `test_links.py` | 18 | Pass |
 | Issue linking CLI (link/unlink/show) | `cli.py` | `test_links_cli.py` | 16 | Pass |
 | Output formatting (compact/wide/auto-detect) | `cli.py` | `test_output_format.py` | 25 | Pass |
+| Concurrency lock (acquire/release/stale/timeout/contention) | `lock.py` | `test_lock.py` | 12 | Pass |
 | Security (input validation, blank title, negative ID, etc.) | various | `test_security.py` | 12 | Pass |
 
-**Total: 382 tests across 11 test modules**
+**Total: 394 tests across 12 test modules**
 
 ## Test Categories
 
@@ -68,6 +69,7 @@ uv run pytest tests/ --cov=yait -v
 - **test_links.py** (18 tests) — Issue linking data model and store tests.
 - **test_links_cli.py** (16 tests) — Issue linking CLI tests.
 - **test_output_format.py** (25 tests) — Output formatting (compact/wide/auto) tests.
+- **test_lock.py** (12 tests) — Concurrency lock: acquire/release, stale detection, timeout, contention.
 - **test_security.py** (12 tests) — Input validation and security edge cases.
 
 ## Shared Fixtures (`conftest.py`)
@@ -160,7 +162,6 @@ yait list --wide
 
 ## Known Limitations
 
-- No concurrency or locking tests — yait is single-user by design.
 - No Windows-specific path tests.
 - `yait edit` and `yait doc edit` (without -b) are not tested (require interactive `$EDITOR`).
 - `yait template create` is not tested (requires interactive `$EDITOR`).
