@@ -6,5 +6,6 @@ build/
 .venv/
 uv.lock
 .yait/
+yait.lock
 .worktrees/
 .worktrees/

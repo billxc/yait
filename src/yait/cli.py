@@ -16,6 +16,7 @@ import yaml
 
 from . import __version__
 from .git_ops import git_commit, git_log, is_git_repo
+from .lock import YaitLock
 from .models import ISSUE_TYPES, PRIORITIES, MILESTONE_STATUSES, LINK_TYPES, LINK_REVERSE, Issue, Milestone, Template, Doc, _SLUG_RE
 from .store import (
     init_store, is_initialized, list_issues, load_issue, next_id, save_issue, delete_issue,
@@ -238,6 +239,7 @@ def init():
     if is_initialized(root):
         click.echo("yait already initialized.")
         return
+    # init creates .yait/ so we cannot lock before it exists.
     init_store(root)
     click.echo("Initialized yait in .yait/")
     git_commit(root, "yait: init")
@@ -301,11 +303,12 @@ def config_set(key, value):
     """
     root = _root()
     _require_init(root)
-    try:
-        set_config_value(root, key, value)
-    except (KeyError, ValueError) as e:
-        raise click.ClickException(str(e))
-    click.echo(f"Set {key} = {value}")
+    with YaitLock(root, "config set"):
+        try:
+            set_config_value(root, key, value)
+        except (KeyError, ValueError) as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Set {key} = {value}")
 
 
 @config.command(name="reset")
@@ -320,11 +323,12 @@ def config_reset(key):
     """
     root = _root()
     _require_init(root)
-    try:
-        reset_config_value(root, key)
-    except KeyError as e:
-        raise click.ClickException(str(e))
-    click.echo(f"Reset {key} to default")
+    with YaitLock(root, "config reset"):
+        try:
+            reset_config_value(root, key)
+        except KeyError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Reset {key} to default")
 
 
 # ── new ──────────────────────────────────────────────────────
@@ -360,53 +364,54 @@ def new(title, title_opt, type, priority, label, assign, body, body_file, milest
     root = _root()
     _require_init(root)
 
-    # Load config defaults as the base fallback
-    cfg_defaults = get_defaults(root)
+    with YaitLock(root, "new"):
+        # Load config defaults as the base fallback
+        cfg_defaults = get_defaults(root)
 
-    # Load template defaults if specified
-    tmpl_type = cfg_defaults["type"]
-    tmpl_priority = cfg_defaults["priority"]
-    tmpl_labels: list[str] = list(cfg_defaults["labels"])
-    tmpl_body = ""
-    tmpl_assignee = cfg_defaults["assignee"]
-    if template_name:
-        try:
-            tmpl = load_template(root, template_name)
-        except FileNotFoundError as e:
-            raise click.ClickException(str(e))
-        tmpl_type = tmpl.type
-        tmpl_priority = tmpl.priority
-        tmpl_labels = list(tmpl.labels)
-        tmpl_body = tmpl.body
+        # Load template defaults if specified
+        tmpl_type = cfg_defaults["type"]
+        tmpl_priority = cfg_defaults["priority"]
+        tmpl_labels: list[str] = list(cfg_defaults["labels"])
+        tmpl_body = ""
+        tmpl_assignee = cfg_defaults["assignee"]
+        if template_name:
+            try:
+                tmpl = load_template(root, template_name)
+            except FileNotFoundError as e:
+                raise click.ClickException(str(e))
+            tmpl_type = tmpl.type
+            tmpl_priority = tmpl.priority
+            tmpl_labels = list(tmpl.labels)
+            tmpl_body = tmpl.body
 
-    # CLI args override template/config values
-    final_type = type if type is not None else tmpl_type
-    final_priority = priority if priority is not None else tmpl_priority
-    final_labels = list(label) if label else tmpl_labels
-    final_assignee = assign if assign is not None else tmpl_assignee
+        # CLI args override template/config values
+        final_type = type if type is not None else tmpl_type
+        final_priority = priority if priority is not None else tmpl_priority
+        final_labels = list(label) if label else tmpl_labels
+        final_assignee = assign if assign is not None else tmpl_assignee
 
-    resolved_body = _read_body(body, body_file)
-    if not resolved_body and tmpl_body:
-        resolved_body = tmpl_body
+        resolved_body = _read_body(body, body_file)
+        if not resolved_body and tmpl_body:
+            resolved_body = tmpl_body
 
-    now = _now()
-    nid = next_id(root)
-    issue = Issue(
-        id=nid,
-        title=resolved,
-        status="open",
-        type=final_type,
-        priority=final_priority,
-        labels=final_labels,
-        assignee=final_assignee,
-        milestone=milestone,
-        created_at=now,
-        updated_at=now,
-        body=resolved_body,
-    )
-    save_issue(root, issue)
-    click.echo(f"Created issue #{nid}: {resolved}")
-    git_commit(root, f"yait: create issue #{nid} \u2014 {resolved}")
+        now = _now()
+        nid = next_id(root)
+        issue = Issue(
+            id=nid,
+            title=resolved,
+            status="open",
+            type=final_type,
+            priority=final_priority,
+            labels=final_labels,
+            assignee=final_assignee,
+            milestone=milestone,
+            created_at=now,
+            updated_at=now,
+            body=resolved_body,
+        )
+        save_issue(root, issue)
+        click.echo(f"Created issue #{nid}: {resolved}")
+        git_commit(root, f"yait: create issue #{nid} \u2014 {resolved}")
 
 
 # ── list ─────────────────────────────────────────────────────
@@ -554,16 +559,17 @@ def close(ids):
     """Close one or more issues."""
     root = _root()
     _require_init(root)
-    for id in ids:
-        issue = _load_or_exit(root, id)
-        if issue.status == "closed":
-            click.echo(f"Issue #{id} is already closed.")
-            continue
-        issue.status = "closed"
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        click.echo(f"Closed issue #{id}: {issue.title}")
-        git_commit(root, f"yait: close issue #{id}")
+    with YaitLock(root, "close"):
+        for id in ids:
+            issue = _load_or_exit(root, id)
+            if issue.status == "closed":
+                click.echo(f"Issue #{id} is already closed.")
+                continue
+            issue.status = "closed"
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            click.echo(f"Closed issue #{id}: {issue.title}")
+            git_commit(root, f"yait: close issue #{id}")
 
 
 # ── delete ──────────────────────────────────────────────────
@@ -584,9 +590,10 @@ def delete(id, force):
     issue = _load_or_exit(root, id)
     if not force:
         click.confirm(f"Are you sure you want to delete issue #{id}?", abort=True)
-    delete_issue(root, id)
-    click.echo(f"Deleted issue #{id}: {issue.title}")
-    git_commit(root, f"yait: delete issue #{id}")
+    with YaitLock(root, "delete"):
+        delete_issue(root, id)
+        click.echo(f"Deleted issue #{id}: {issue.title}")
+        git_commit(root, f"yait: delete issue #{id}")
 
 
 # ── reopen ───────────────────────────────────────────────────
@@ -597,16 +604,17 @@ def reopen(ids):
     """Reopen one or more closed issues."""
     root = _root()
     _require_init(root)
-    for id in ids:
-        issue = _load_or_exit(root, id)
-        if issue.status == "open":
-            click.echo(f"Issue #{id} is already open.")
-            continue
-        issue.status = "open"
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        click.echo(f"Reopened issue #{id}: {issue.title}")
-        git_commit(root, f"yait: reopen issue #{id}")
+    with YaitLock(root, "reopen"):
+        for id in ids:
+            issue = _load_or_exit(root, id)
+            if issue.status == "open":
+                click.echo(f"Issue #{id} is already open.")
+                continue
+            issue.status = "open"
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            click.echo(f"Reopened issue #{id}: {issue.title}")
+            git_commit(root, f"yait: reopen issue #{id}")
 
 
 # ── comment ──────────────────────────────────────────────────
@@ -627,13 +635,14 @@ def comment(id, message, message_file):
             click.echo("Aborted: empty comment.")
             return
         message = message.strip()
-    now = _now()
-    separator = "\n\n---\n" if issue.body else ""
-    issue.body += f"{separator}**Comment** ({now}):\n{message}"
-    issue.updated_at = now
-    save_issue(root, issue)
-    click.echo(f"Added comment to issue #{id}")
-    git_commit(root, f"yait: comment on issue #{id}")
+    with YaitLock(root, "comment"):
+        now = _now()
+        separator = "\n\n---\n" if issue.body else ""
+        issue.body += f"{separator}**Comment** ({now}):\n{message}"
+        issue.updated_at = now
+        save_issue(root, issue)
+        click.echo(f"Added comment to issue #{id}")
+        git_commit(root, f"yait: comment on issue #{id}")
 
 
 # ── edit ─────────────────────────────────────────────────────
@@ -666,18 +675,23 @@ def edit(id, new_title, new_type, new_priority, new_assign, new_body, new_body_f
         resolved_body = _read_body(new_body, new_body_file)
         new_body = resolved_body
     if any(v is not None for v in (new_title, new_type, new_priority, new_assign, new_body, new_milestone)):
-        if new_title is not None:
-            issue.title = new_title
-        if new_type is not None:
-            issue.type = new_type
-        if new_priority is not None:
-            issue.priority = new_priority
-        if new_assign is not None:
-            issue.assignee = new_assign or None
-        if new_body is not None:
-            issue.body = new_body
-        if new_milestone is not None:
-            issue.milestone = new_milestone or None
+        with YaitLock(root, "edit"):
+            if new_title is not None:
+                issue.title = new_title
+            if new_type is not None:
+                issue.type = new_type
+            if new_priority is not None:
+                issue.priority = new_priority
+            if new_assign is not None:
+                issue.assignee = new_assign or None
+            if new_body is not None:
+                issue.body = new_body
+            if new_milestone is not None:
+                issue.milestone = new_milestone or None
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            click.echo(f"Updated issue #{id}: {issue.title}")
+            git_commit(root, f"yait: edit #{id}")
     else:
         template = f"title: {issue.title}\n\n{issue.body}"
         result = click.edit(template)
@@ -691,10 +705,11 @@ def edit(id, new_title, new_type, new_priority, new_assign, new_body, new_body_f
         else:
             issue.title = first_line
         issue.body = lines[1].strip() if len(lines) > 1 else ""
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Updated issue #{id}: {issue.title}")
-    git_commit(root, f"yait: edit #{id}")
+        with YaitLock(root, "edit"):
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            click.echo(f"Updated issue #{id}: {issue.title}")
+            git_commit(root, f"yait: edit #{id}")
 
 
 # ── label ────────────────────────────────────────────────────
@@ -715,11 +730,12 @@ def label_add(id, name):
     if name in issue.labels:
         click.echo(f"Issue #{id} already has label '{name}'.")
         return
-    issue.labels.append(name)
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Added label '{name}' to issue #{id}")
-    git_commit(root, f"yait: label #{id} +{name}")
+    with YaitLock(root, "label add"):
+        issue.labels.append(name)
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Added label '{name}' to issue #{id}")
+        git_commit(root, f"yait: label #{id} +{name}")
 
 
 @label.command(name="remove")
@@ -733,11 +749,12 @@ def label_remove(id, name):
     if name not in issue.labels:
         click.echo(f"Issue #{id} does not have label '{name}'.")
         return
-    issue.labels.remove(name)
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Removed label '{name}' from issue #{id}")
-    git_commit(root, f"yait: label #{id} -{name}")
+    with YaitLock(root, "label remove"):
+        issue.labels.remove(name)
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Removed label '{name}' from issue #{id}")
+        git_commit(root, f"yait: label #{id} -{name}")
 
 
 # ── milestone ───────────────────────────────────────────────
@@ -767,12 +784,13 @@ def milestone_create(name, description, due):
         due_date=due or "",
         created_at=_now(),
     )
-    try:
-        save_milestone(root, m)
-    except ValueError as e:
-        raise click.ClickException(str(e))
-    click.echo(f"Created milestone '{name}'")
-    git_commit(root, f"yait: create milestone '{name}'")
+    with YaitLock(root, "milestone create"):
+        try:
+            save_milestone(root, m)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Created milestone '{name}'")
+        git_commit(root, f"yait: create milestone '{name}'")
 
 
 @milestone.command(name="list")
@@ -884,10 +902,11 @@ def milestone_close(name):
     if m.status == "closed":
         click.echo(f"Milestone '{name}' is already closed.")
         return
-    m.status = "closed"
-    update_milestone(root, m)
-    click.echo(f"Closed milestone '{name}'")
-    git_commit(root, f"yait: close milestone '{name}'")
+    with YaitLock(root, "milestone close"):
+        m.status = "closed"
+        update_milestone(root, m)
+        click.echo(f"Closed milestone '{name}'")
+        git_commit(root, f"yait: close milestone '{name}'")
 
 
 @milestone.command(name="reopen")
@@ -908,10 +927,11 @@ def milestone_reopen(name):
     if m.status == "open":
         click.echo(f"Milestone '{name}' is already open.")
         return
-    m.status = "open"
-    update_milestone(root, m)
-    click.echo(f"Reopened milestone '{name}'")
-    git_commit(root, f"yait: reopen milestone '{name}'")
+    with YaitLock(root, "milestone reopen"):
+        m.status = "open"
+        update_milestone(root, m)
+        click.echo(f"Reopened milestone '{name}'")
+        git_commit(root, f"yait: reopen milestone '{name}'")
 
 
 @milestone.command(name="edit")
@@ -934,16 +954,17 @@ def milestone_edit(name, description, due):
         raise click.ClickException(f"Milestone '{name}' not found.")
     if description is None and due is None:
         raise click.ClickException("Nothing to edit. Use --description or --due.")
-    if description is not None:
-        m.description = description
-    if due is not None:
-        m.due_date = due
-    try:
-        update_milestone(root, m)
-    except ValueError as e:
-        raise click.ClickException(str(e))
-    click.echo(f"Updated milestone '{name}'")
-    git_commit(root, f"yait: edit milestone '{name}'")
+    with YaitLock(root, "milestone edit"):
+        if description is not None:
+            m.description = description
+        if due is not None:
+            m.due_date = due
+        try:
+            update_milestone(root, m)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Updated milestone '{name}'")
+        git_commit(root, f"yait: edit milestone '{name}'")
 
 
 @milestone.command(name="delete")
@@ -963,14 +984,15 @@ def milestone_delete(name, force):
     """
     root = _root()
     _require_init(root)
-    try:
-        delete_milestone(root, name, force=force)
-    except KeyError:
-        raise click.ClickException(f"Milestone '{name}' not found.")
-    except ValueError as e:
-        raise click.ClickException(str(e).replace("force=True", "--force"))
-    click.echo(f"Deleted milestone '{name}'")
-    git_commit(root, f"yait: delete milestone '{name}'")
+    with YaitLock(root, "milestone delete"):
+        try:
+            delete_milestone(root, name, force=force)
+        except KeyError:
+            raise click.ClickException(f"Milestone '{name}' not found.")
+        except ValueError as e:
+            raise click.ClickException(str(e).replace("force=True", "--force"))
+        click.echo(f"Deleted milestone '{name}'")
+        git_commit(root, f"yait: delete milestone '{name}'")
 
 
 # ── template ───────────────────────────────────────────────
@@ -1040,9 +1062,10 @@ def template_create(name):
         labels=fm.get("labels") or [],
         body=body,
     )
-    save_template(root, tmpl)
-    click.echo(f"Saved template '{tmpl.name}'")
-    git_commit(root, f"yait: save template '{tmpl.name}'")
+    with YaitLock(root, "template create"):
+        save_template(root, tmpl)
+        click.echo(f"Saved template '{tmpl.name}'")
+        git_commit(root, f"yait: save template '{tmpl.name}'")
 
 
 @template.command(name="list")
@@ -1077,12 +1100,13 @@ def template_delete(name):
     """
     root = _root()
     _require_init(root)
-    try:
-        delete_template(root, name)
-    except FileNotFoundError as e:
-        raise click.ClickException(str(e))
-    click.echo(f"Deleted template '{name}'")
-    git_commit(root, f"yait: delete template '{name}'")
+    with YaitLock(root, "template delete"):
+        try:
+            delete_template(root, name)
+        except FileNotFoundError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Deleted template '{name}'")
+        git_commit(root, f"yait: delete template '{name}'")
 
 
 # ── search ───────────────────────────────────────────────────
@@ -1308,11 +1332,12 @@ def assign(id, name):
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
-    issue.assignee = name
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Assigned issue #{id} to {name}")
-    git_commit(root, f"yait: assign #{id} to {name}")
+    with YaitLock(root, "assign"):
+        issue.assignee = name
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Assigned issue #{id} to {name}")
+        git_commit(root, f"yait: assign #{id} to {name}")
 
 
 @main.command()
@@ -1322,11 +1347,12 @@ def unassign(id):
     root = _root()
     _require_init(root)
     issue = _load_or_exit(root, id)
-    issue.assignee = None
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Unassigned issue #{id}")
-    git_commit(root, f"yait: unassign #{id}")
+    with YaitLock(root, "unassign"):
+        issue.assignee = None
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Unassigned issue #{id}")
+        git_commit(root, f"yait: unassign #{id}")
 
 
 # ── log ─────────────────────────────────────────────────────
@@ -1412,44 +1438,45 @@ def import_cmd(file):
     if not isinstance(data, list):
         raise click.ClickException("Expected a JSON array of issues.")
 
-    existing_ids = {i.id for i in list_issues(root, status=None)}
-    imported = 0
-    skipped = 0
+    with YaitLock(root, "import"):
+        existing_ids = {i.id for i in list_issues(root, status=None)}
+        imported = 0
+        skipped = 0
 
-    for item in data:
-        issue_id = item.get("id")
-        if issue_id in existing_ids:
-            click.echo(f"Warning: skipping issue #{issue_id} (already exists)", err=True)
-            skipped += 1
-            continue
-        issue = Issue(
-            id=issue_id,
-            title=item["title"],
-            status=item.get("status", "open"),
-            type=item.get("type", "misc"),
-            priority=item.get("priority", "none"),
-            labels=item.get("labels") or [],
-            assignee=item.get("assignee"),
-            milestone=item.get("milestone"),
-            created_at=item.get("created_at", ""),
-            updated_at=item.get("updated_at", ""),
-            body=item.get("body", ""),
-        )
-        save_issue(root, issue)
-        imported += 1
+        for item in data:
+            issue_id = item.get("id")
+            if issue_id in existing_ids:
+                click.echo(f"Warning: skipping issue #{issue_id} (already exists)", err=True)
+                skipped += 1
+                continue
+            issue = Issue(
+                id=issue_id,
+                title=item["title"],
+                status=item.get("status", "open"),
+                type=item.get("type", "misc"),
+                priority=item.get("priority", "none"),
+                labels=item.get("labels") or [],
+                assignee=item.get("assignee"),
+                milestone=item.get("milestone"),
+                created_at=item.get("created_at", ""),
+                updated_at=item.get("updated_at", ""),
+                body=item.get("body", ""),
+            )
+            save_issue(root, issue)
+            imported += 1
 
-    # Update next_id to be above the highest imported ID
-    if imported > 0:
-        from .store import _read_config, _write_config
-        all_issues = list_issues(root, status=None)
-        max_id = max(i.id for i in all_issues)
-        cfg = _read_config(root)
-        if cfg["next_id"] <= max_id:
-            cfg["next_id"] = max_id + 1
-            _write_config(root, cfg)
-        git_commit(root, f"yait: import {imported} issues")
+        # Update next_id to be above the highest imported ID
+        if imported > 0:
+            from .store import _read_config, _write_config
+            all_issues = list_issues(root, status=None)
+            max_id = max(i.id for i in all_issues)
+            cfg = _read_config(root)
+            if cfg["next_id"] <= max_id:
+                cfg["next_id"] = max_id + 1
+                _write_config(root, cfg)
+            git_commit(root, f"yait: import {imported} issues")
 
-    click.echo(f"Imported {imported} issues, skipped {skipped}.")
+        click.echo(f"Imported {imported} issues, skipped {skipped}.")
 
 
 # ── doc ────────────────────────────────────────────────────
@@ -1485,11 +1512,12 @@ def doc_create(slug, title, body, body_file):
     if body is None and body_file is None:
         resolved_body = click.edit("") or ""
         resolved_body = resolved_body.strip()
-    now = _now()
-    d = Doc(slug=slug, title=title, created_at=now, updated_at=now, body=resolved_body)
-    save_doc(root, d)
-    click.echo(f"Created doc '{slug}': {title}")
-    git_commit(root, f"yait: create doc '{slug}'")
+    with YaitLock(root, "doc create"):
+        now = _now()
+        d = Doc(slug=slug, title=title, created_at=now, updated_at=now, body=resolved_body)
+        save_doc(root, d)
+        click.echo(f"Created doc '{slug}': {title}")
+        git_commit(root, f"yait: create doc '{slug}'")
 
 
 @doc.command(name="show")
@@ -1584,20 +1612,26 @@ def doc_edit(slug, new_title, new_body):
     except FileNotFoundError:
         raise click.ClickException(f"Doc '{slug}' not found.")
     if new_title is not None or new_body is not None:
-        if new_title is not None:
-            d.title = new_title
-        if new_body is not None:
-            d.body = new_body
+        with YaitLock(root, "doc edit"):
+            if new_title is not None:
+                d.title = new_title
+            if new_body is not None:
+                d.body = new_body
+            d.updated_at = _now()
+            save_doc(root, d)
+            click.echo(f"Updated doc '{slug}'")
+            git_commit(root, f"yait: edit doc '{slug}'")
     else:
         result = click.edit(d.body)
         if result is None:
             click.echo("Edit cancelled.")
             return
         d.body = result.strip()
-    d.updated_at = _now()
-    save_doc(root, d)
-    click.echo(f"Updated doc '{slug}'")
-    git_commit(root, f"yait: edit doc '{slug}'")
+        with YaitLock(root, "doc edit"):
+            d.updated_at = _now()
+            save_doc(root, d)
+            click.echo(f"Updated doc '{slug}'")
+            git_commit(root, f"yait: edit doc '{slug}'")
 
 
 @doc.command(name="delete")
@@ -1625,9 +1659,10 @@ def doc_delete(slug, force):
         click.echo("Delete will remove the document but NOT the references.")
         click.echo("Use 'yait doc unlink' to clean up first.")
         click.confirm("Are you sure?", abort=True)
-    delete_doc(root, slug)
-    click.echo(f"Deleted doc '{slug}'")
-    git_commit(root, f"yait: delete doc '{slug}'")
+    with YaitLock(root, "doc delete"):
+        delete_doc(root, slug)
+        click.echo(f"Deleted doc '{slug}'")
+        git_commit(root, f"yait: delete doc '{slug}'")
 
 
 @doc.command(name="link")
@@ -1656,22 +1691,23 @@ def doc_link(args):
         except ValueError:
             raise click.ClickException(f"Invalid issue ID: {a!r}")
     linked_ids = []
-    for iid in issue_ids:
-        issue = _load_or_exit(root, iid)
-        if doc_ref in issue.docs:
-            click.echo(f"Issue #{iid} already linked to '{doc_ref}'.")
-            continue
-        issue.docs.append(doc_ref)
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        linked_ids.append(iid)
-    if linked_ids:
-        if len(linked_ids) == 1:
-            click.echo(f"Linked doc '{doc_ref}' to issue #{linked_ids[0]}")
-        else:
-            ids_str = ", ".join(f"#{i}" for i in linked_ids)
-            click.echo(f"Linked doc '{doc_ref}' to issues {ids_str}")
-        git_commit(root, f"yait: link doc '{doc_ref}' to #{', #'.join(str(i) for i in linked_ids)}")
+    with YaitLock(root, "doc link"):
+        for iid in issue_ids:
+            issue = _load_or_exit(root, iid)
+            if doc_ref in issue.docs:
+                click.echo(f"Issue #{iid} already linked to '{doc_ref}'.")
+                continue
+            issue.docs.append(doc_ref)
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            linked_ids.append(iid)
+        if linked_ids:
+            if len(linked_ids) == 1:
+                click.echo(f"Linked doc '{doc_ref}' to issue #{linked_ids[0]}")
+            else:
+                ids_str = ", ".join(f"#{i}" for i in linked_ids)
+                click.echo(f"Linked doc '{doc_ref}' to issues {ids_str}")
+            git_commit(root, f"yait: link doc '{doc_ref}' to #{', #'.join(str(i) for i in linked_ids)}")
 
 
 @doc.command(name="unlink")
@@ -1690,11 +1726,12 @@ def doc_unlink(id, doc_ref):
     if doc_ref not in issue.docs:
         click.echo(f"Issue #{id} is not linked to '{doc_ref}'.")
         return
-    issue.docs.remove(doc_ref)
-    issue.updated_at = _now()
-    save_issue(root, issue)
-    click.echo(f"Unlinked doc '{doc_ref}' from issue #{id}")
-    git_commit(root, f"yait: unlink doc '{doc_ref}' from #{id}")
+    with YaitLock(root, "doc unlink"):
+        issue.docs.remove(doc_ref)
+        issue.updated_at = _now()
+        save_issue(root, issue)
+        click.echo(f"Unlinked doc '{doc_ref}' from issue #{id}")
+        git_commit(root, f"yait: unlink doc '{doc_ref}' from #{id}")
 
 
 # ── link / unlink ──────────────────────────────────────────
@@ -1718,14 +1755,15 @@ def link_cmd(source_id, link_type, target_id):
     """
     root = _root()
     _require_init(root)
-    try:
-        add_link(root, source_id, link_type, target_id)
-    except FileNotFoundError as e:
-        raise click.ClickException(str(e))
-    except ValueError as e:
-        raise click.ClickException(str(e))
-    click.echo(f"Linked #{source_id} {link_type} #{target_id}")
-    git_commit(root, f"yait: link #{source_id} {link_type} #{target_id}")
+    with YaitLock(root, "link"):
+        try:
+            add_link(root, source_id, link_type, target_id)
+        except FileNotFoundError as e:
+            raise click.ClickException(str(e))
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Linked #{source_id} {link_type} #{target_id}")
+        git_commit(root, f"yait: link #{source_id} {link_type} #{target_id}")
 
 
 @main.command(name="unlink")
@@ -1747,9 +1785,10 @@ def unlink_cmd(source_id, target_id):
     if not had_link:
         click.echo(f"No link between #{source_id} and #{target_id}.")
         return
-    remove_link(root, source_id, target_id)
-    click.echo(f"Unlinked #{source_id} and #{target_id}")
-    git_commit(root, f"yait: unlink #{source_id} and #{target_id}")
+    with YaitLock(root, "unlink"):
+        remove_link(root, source_id, target_id)
+        click.echo(f"Unlinked #{source_id} and #{target_id}")
+        git_commit(root, f"yait: unlink #{source_id} and #{target_id}")
 
 
 # ── bulk ───────────────────────────────────────────────────
@@ -1871,19 +1910,20 @@ def bulk_label_add(name, ids, filter_status, filter_type, filter_priority,
     updated = 0
     failed = 0
     skipped = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        if name in issue.labels:
-            click.echo(f"Issue #{issue_id} already has label '{name}', skipping.")
-            skipped += 1
-            continue
-        issue.labels.append(name)
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk label #{issue_id} +{name}")
-        updated += 1
+    with YaitLock(root, "bulk label add"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            if name in issue.labels:
+                click.echo(f"Issue #{issue_id} already has label '{name}', skipping.")
+                skipped += 1
+                continue
+            issue.labels.append(name)
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk label #{issue_id} +{name}")
+            updated += 1
     _bulk_summary(updated, failed, skipped)
 
 
@@ -1911,19 +1951,20 @@ def bulk_label_remove(name, ids, filter_status, filter_type, filter_priority,
     updated = 0
     failed = 0
     skipped = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        if name not in issue.labels:
-            click.echo(f"Issue #{issue_id} does not have label '{name}', skipping.")
-            skipped += 1
-            continue
-        issue.labels.remove(name)
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk label #{issue_id} -{name}")
-        updated += 1
+    with YaitLock(root, "bulk label remove"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            if name not in issue.labels:
+                click.echo(f"Issue #{issue_id} does not have label '{name}', skipping.")
+                skipped += 1
+                continue
+            issue.labels.remove(name)
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk label #{issue_id} -{name}")
+            updated += 1
     _bulk_summary(updated, failed, skipped)
 
 
@@ -1952,15 +1993,16 @@ def bulk_assign(name, ids, filter_status, filter_type, filter_priority,
         return
     updated = 0
     failed = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        issue.assignee = name
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk assign #{issue_id} to {name}")
-        updated += 1
+    with YaitLock(root, "bulk assign"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            issue.assignee = name
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk assign #{issue_id} to {name}")
+            updated += 1
     _bulk_summary(updated, failed)
 
 
@@ -1986,15 +2028,16 @@ def bulk_unassign(ids, filter_status, filter_type, filter_priority,
         return
     updated = 0
     failed = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        issue.assignee = None
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk unassign #{issue_id}")
-        updated += 1
+    with YaitLock(root, "bulk unassign"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            issue.assignee = None
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk unassign #{issue_id}")
+            updated += 1
     _bulk_summary(updated, failed)
 
 
@@ -2023,15 +2066,16 @@ def bulk_priority(value, ids, filter_status, filter_type, filter_priority,
         return
     updated = 0
     failed = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        issue.priority = value
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk priority #{issue_id} -> {value}")
-        updated += 1
+    with YaitLock(root, "bulk priority"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            issue.priority = value
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk priority #{issue_id} -> {value}")
+            updated += 1
     _bulk_summary(updated, failed)
 
 
@@ -2060,15 +2104,16 @@ def bulk_milestone(value, ids, filter_status, filter_type, filter_priority,
         return
     updated = 0
     failed = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        issue.milestone = value
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk milestone #{issue_id} -> {value}")
-        updated += 1
+    with YaitLock(root, "bulk milestone"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            issue.milestone = value
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk milestone #{issue_id} -> {value}")
+            updated += 1
     _bulk_summary(updated, failed)
 
 
@@ -2097,13 +2142,14 @@ def bulk_type(value, ids, filter_status, filter_type, filter_priority,
         return
     updated = 0
     failed = 0
-    for issue_id, issue in pairs:
-        if issue is None:
-            failed += 1
-            continue
-        issue.type = value
-        issue.updated_at = _now()
-        save_issue(root, issue)
-        git_commit(root, f"yait: bulk type #{issue_id} -> {value}")
-        updated += 1
+    with YaitLock(root, "bulk type"):
+        for issue_id, issue in pairs:
+            if issue is None:
+                failed += 1
+                continue
+            issue.type = value
+            issue.updated_at = _now()
+            save_issue(root, issue)
+            git_commit(root, f"yait: bulk type #{issue_id} -> {value}")
+            updated += 1
     _bulk_summary(updated, failed)

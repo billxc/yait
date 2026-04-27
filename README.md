@@ -68,6 +68,7 @@ yait stats --by milestone --json
 | **Output Formats** | `--compact`, `--wide`, auto-detect terminal width, `--json` |
 | **Import/Export** | `export --format json/csv`, `import` from JSON |
 | **History** | `log` — git-based change history per issue |
+| **Concurrency** | Multi-process safe via `.yait/yait.lock` global lock on all write ops; auto-recovers from crashes (PID check + 60s timeout) |
 
 ## Command Reference
 
