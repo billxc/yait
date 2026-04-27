@@ -82,7 +82,7 @@ project-root/
 **Named project mode (`--project` / `-P`):**
 
 ```
-~/.yait/                          # overrideable via YAIT_HOME
+~/.yait/
 └── projects/
     └── myapp/                    # self-contained, flat layout
         ├── .git/                 # per-project git repo
@@ -276,7 +276,7 @@ Entry command: `yait`
 
 **Global option:** `--project / -P <name>` — select a named project for any command.
 
-**Environment variables:** `YAIT_PROJECT` (default project name), `YAIT_HOME` (override `~/.yait/` location).
+**Environment variables:** `YAIT_PROJECT` (default project name).
 
 ---
 
@@ -388,7 +388,6 @@ yet-another-issue-tracker/
 
 - `--project / -P` global flag to select named projects stored under `~/.yait/projects/`
 - `YAIT_PROJECT` env var for session-level default project
-- `YAIT_HOME` env var to override `~/.yait/` location
 - `yait project` subcommand group: `create/list/delete/rename/import/path`
 - Per-project git repo with isolated history
 - Full backward compatibility — local `.yait/` in cwd still works unchanged

@@ -86,7 +86,7 @@ yait project import myapp
 | **Templates** | `template create/list/delete`, `new --template` |
 | **Design Docs** | `doc create/show/list/edit/delete/link/unlink` |
 | **Issue Linking** | `link` (blocks/depends-on/relates-to), `unlink` |
-| **Project Management** | `--project / -P` flag, `project create/list/delete/rename/import/path`, `YAIT_PROJECT` / `YAIT_HOME` env vars |
+| **Project Management** | `--project / -P` flag, `project create/list/delete/rename/import/path`, `YAIT_PROJECT` env var |
 | **Config** | `config set/reset` for defaults (type, priority, assignee) and display settings |
 | **Output Formats** | `--compact`, `--wide`, auto-detect terminal width, `--json` |
 | **Import/Export** | `export --format json/csv`, `import` from JSON |
@@ -243,7 +243,6 @@ yait -P myapp bulk assign alice --filter-status open
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `YAIT_PROJECT` | (unset) | Default project name, equivalent to `-P` |
-| `YAIT_HOME` | `~/.yait` | Location of global yait directory |
 
 Resolution order: `--project` flag > `YAIT_PROJECT` env > local `.yait/` in cwd.
 
@@ -283,7 +282,7 @@ project-root/
 ### Named project mode (`--project` / `-P`)
 
 ```
-~/.yait/                             # overrideable via YAIT_HOME
+~/.yait/                             
 └── projects/
     ├── myapp/                       # self-contained, flat layout
     │   ├── .git/                    # per-project git repo

@@ -15,7 +15,6 @@ YAIT currently resolves the data directory as `.yait/` relative to `Path.cwd()`.
 **This feature adds:**
 - A `--project / -P` global flag to select a named project stored under `~/.yait/projects/`
 - A `YAIT_PROJECT` environment variable for session-level default
-- A `YAIT_HOME` environment variable to override `~/.yait/` location
 - A `yait project` subcommand group for project lifecycle management
 - Full backward compatibility — local `.yait/` in cwd continues to work unchanged
 
@@ -73,13 +72,19 @@ yait project import myapp
 # Copied .yait/ -> ~/.yait/projects/myapp/
 ```
 
-### 2.6 Multi-agent workgroup with custom YAIT_HOME
+### 2.6 Multi-agent workgroup
+
+Multiple agents can manage the same project from different directories using `-P`:
 
 ```bash
-export YAIT_HOME=~/workgroup/.yait
 yait project create shared-tracker
 yait -P shared-tracker new "Shared task" -t feature
 ```
+
+> **Note:** The `YAIT_HOME` environment variable exists in the codebase to override
+> the default `~/.yait/` location, but it is an **internal mechanism used only for
+> test isolation**. It is not part of the public API and may be removed in a future
+> version. Do not rely on it in scripts or documentation aimed at end users.
 
 ---
 
@@ -115,7 +120,6 @@ yait -P myapp config set defaults.type bug
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `YAIT_PROJECT` | (unset) | Default project name, equivalent to `-P` |
-| `YAIT_HOME` | `~/.yait` | Location of global yait directory |
 
 ### 3.3 `project` subcommand group
 
@@ -142,7 +146,7 @@ The `project` subcommand group ignores the `-P` flag — it manages projects, no
 ### 4.1 Global directory layout
 
 ```
-$YAIT_HOME/                          # default: ~/.yait/, overrideable via YAIT_HOME
+~/.yait/                                 # fixed default location
   projects/
     myapp/                           # self-contained, flat (no nested .yait/)
       .git/                          # per-project git repo
@@ -166,13 +170,13 @@ $YAIT_HOME/                          # default: ~/.yait/, overrideable via YAIT_
 
 ### 4.2 Key design decisions
 
-**Flat layout (no nested `.yait/`):** Each named project's data dir is `$YAIT_HOME/projects/<name>/`, and files live directly inside it (`config.yaml`, `issues/`, etc.). This requires refactoring `store.py` to not hardcode the `.yait/` subdirectory, but produces a clean, unsurprising layout.
+**Flat layout (no nested `.yait/`):** Each named project's data dir is `~/.yait/projects/<name>/`, and files live directly inside it (`config.yaml`, `issues/`, etc.). This requires refactoring `store.py` to not hardcode the `.yait/` subdirectory, but produces a clean, unsurprising layout.
 
 **Per-project git repo:** Each named project gets its own git repo, initialized by `yait project create`. This preserves per-project `yait log` and clean isolated history.
 
 **`.gitignore` for `yait.lock`:** `yait project create` writes a `.gitignore` containing `yait.lock` into the project data dir. In project mode, `git_commit` stages with `git add .` (everything in the data dir), so without `.gitignore` the lock file would be committed on every write operation.
 
-**Directory permissions:** `$YAIT_HOME/` is created with `0o700` (owner-only access) since issue data may contain sensitive information.
+**Directory permissions:** `~/.yait/` is created with `0o700` (owner-only access) since issue data may contain sensitive information.
 
 ### 4.3 Local mode (unchanged)
 
@@ -197,9 +201,8 @@ When a yait command is invoked, the data directory is resolved in this order:
 ```
 1. --project / -P flag       (explicit, highest priority)
 2. YAIT_PROJECT env var      (session default)
-3. YAIT_HOME env var         (override global dir, combined with --project/env)
-4. .yait/ in cwd             (backward compat, local mode)
-5. Error with help text
+3. .yait/ in cwd             (backward compat, local mode)
+4. Error with help text
 ```
 
 ```python
@@ -210,7 +213,7 @@ def resolve_data_dir(project_flag: str | None) -> tuple[Path, bool]:
     - data_dir: Path to the directory containing config.yaml, issues/, etc.
     - is_project_mode: True if using a named project (affects git staging)
     """
-    yait_home = Path(os.environ.get("YAIT_HOME", "~/.yait")).expanduser()
+    yait_home = Path("~/.yait").expanduser()
 
     # 1. Explicit --project flag
     name = project_flag or os.environ.get("YAIT_PROJECT")
@@ -255,8 +258,8 @@ def resolve_data_dir(project_flag: str | None) -> tuple[Path, bool]:
 ### 6.1 `yait project create <name>`
 
 1. Validates name: `[a-zA-Z0-9][a-zA-Z0-9_-]*`, max 64 chars
-2. Creates `$YAIT_HOME/` with permissions `0o700` if it doesn't exist
-3. Creates `$YAIT_HOME/projects/<name>/` with standard structure (config.yaml, issues/, templates/, docs/)
+2. Creates `~/.yait/` with permissions `0o700` if it doesn't exist
+3. Creates `~/.yait/projects/<name>/` with standard structure (config.yaml, issues/, templates/, docs/)
 4. Writes `.gitignore` containing `yait.lock`
 5. Runs `git init` + initial commit in the project dir
 
@@ -276,11 +279,11 @@ myapp      15    8       2026-04-27
 infra      3     4       2026-04-25
 ```
 
-Scans `$YAIT_HOME/projects/` for directories with a valid `config.yaml`.
+Scans `~/.yait/projects/` for directories with a valid `config.yaml`.
 
 ### 6.3 `yait project delete <name> [-f]`
 
-Prompts for confirmation unless `--force`. Deletes `$YAIT_HOME/projects/<name>/` entirely.
+Prompts for confirmation unless `--force`. Deletes `~/.yait/projects/<name>/` entirely.
 
 ### 6.4 `yait project rename <old> <new>`
 
@@ -413,7 +416,7 @@ No changes to function signatures beyond renaming `root` → `data_dir` (optiona
 
 6. **Add `project` subcommand group** (~120 LOC):
    - `project create` — create dir structure, `.gitignore`, git init
-   - `project list` — scan `$YAIT_HOME/projects/`, load configs, count issues
+   - `project list` — scan `~/.yait/projects/`, load configs, count issues
    - `project delete` — rmtree with confirmation
    - `project rename` — rename dir + warning message
    - `project import` — copy `.yait/` contents, git init, warning about history loss
@@ -514,14 +517,14 @@ Phase 1c (Tests + docs):
 
 | # | Scenario | Setup | Command | Expected |
 |---|----------|-------|---------|----------|
-| T1 | `-P` flag resolves to named project | Create project `foo` | `yait -P foo list` | Uses `$YAIT_HOME/projects/foo/` |
+| T1 | `-P` flag resolves to named project | Create project `foo` | `yait -P foo list` | Uses `~/.yait/projects/foo/` |
 | T2 | `YAIT_PROJECT` env resolves | `YAIT_PROJECT=foo` | `yait list` | Uses named project `foo` |
 | T3 | `-P` overrides env var | `YAIT_PROJECT=foo` | `yait -P bar list` | Uses `bar`, not `foo` |
 | T4 | Local `.yait/` fallback | `.yait/` exists in cwd | `yait list` | Uses local `.yait/` |
 | T5 | `YAIT_PROJECT` overrides local | `.yait/` exists + `YAIT_PROJECT=foo` | `yait list` | Uses `foo` |
 | T6 | No project found | No `.yait/`, no env | `yait list` | Error with help text |
 | T7 | Named project not found | No project `missing` | `yait -P missing list` | Error suggesting `project create` |
-| T8 | `YAIT_HOME` override | `YAIT_HOME=/tmp/test` | `yait project create x` | Creates under `/tmp/test/projects/x/` |
+| T8 | `YAIT_HOME` override (internal/test) | `YAIT_HOME=/tmp/test` | `yait project create x` | Creates under `/tmp/test/projects/x/` (test-only mechanism) |
 
 ### 10.2 Project CRUD tests
 
@@ -596,7 +599,7 @@ yait project import myapp
 ```
 
 **What it does:**
-1. Copies `.yait/` contents into `$YAIT_HOME/projects/myapp/`
+1. Copies `.yait/` contents into `~/.yait/projects/myapp/`
 2. Writes `.gitignore` (containing `yait.lock`)
 3. Runs `git init` + initial commit in the new project dir
 4. Prints warning about git history
@@ -636,7 +639,7 @@ Existing users are not required to migrate. Local `.yait/` continues to work exa
 | E11 | `yait -P foo project list` | `project` subgroup ignores `-P`, lists all projects |
 | E12 | `project rename` breaks downstream | Warning message printed after rename |
 | E13 | `project import` loses git history | Warning printed; history remains in original repo |
-| E14 | `$YAIT_HOME` on shared system | Allows custom location for multi-agent setups |
+| E14 | `YAIT_HOME` env var | Internal test mechanism; allows overriding `~/.yait/` for test isolation |
 | E15 | Sensitive data in `~/.yait/` | Dir created with `0o700` permissions |
 | E16 | `project path --check` for scripting | Exit 1 if not found, exit 0 if found |
 
@@ -648,9 +651,9 @@ This feature constitutes **v0.7.0**.
 
 | Aspect | Current (v0.6.0) | v0.7.0 |
 |--------|-------------------|--------|
-| Data location | `.yait/` in cwd | `$YAIT_HOME/projects/<name>/` or `.yait/` in cwd |
+| Data location | `.yait/` in cwd | `~/.yait/projects/<name>/` or `.yait/` in cwd |
 | Project selection | Implicit (cwd) | `--project` > `YAIT_PROJECT` > cwd > error |
-| Global dir override | n/a | `YAIT_HOME` env var |
+| Global dir override | n/a | n/a (`YAIT_HOME` exists for test isolation only) |
 | Git integration | Auto-commit in project repo | Per-project git repo (named) or project repo (local) |
 | Concurrency | Per-directory lock | Per-project lock (same mechanism) |
 | Cross-directory use | Not supported | Fully supported via `--project` |

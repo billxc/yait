@@ -59,7 +59,7 @@ uv run pytest tests/ --cov=yait -v
 
 | Feature | Module | Test File | Tests | Status |
 |---|---|---|---|---|
-| Project management (--project, project create/list/delete/rename/import/path, YAIT_PROJECT, YAIT_HOME) | `cli.py`, `store.py`, `git_ops.py`, `lock.py` | `test_project.py` | 46 | Pass |
+| Project management (--project, project create/list/delete/rename/import/path, YAIT_PROJECT) | `cli.py`, `store.py`, `git_ops.py`, `lock.py` | `test_project.py` | 46 | Pass |
 
 **Total: 440 tests across 13 test modules**
 
@@ -76,7 +76,7 @@ uv run pytest tests/ --cov=yait -v
 - **test_links_cli.py** (16 tests) — Issue linking CLI tests.
 - **test_output_format.py** (25 tests) — Output formatting (compact/wide/auto) tests.
 - **test_lock.py** (12 tests) — Concurrency lock: acquire/release, stale detection, timeout, contention.
-- **test_project.py** (46 tests) — Project management: create/list/delete/rename/import/path, --project flag, YAIT_PROJECT/YAIT_HOME env vars, resolution logic, backward compat.
+- **test_project.py** (46 tests) — Project management: create/list/delete/rename/import/path, --project flag, YAIT_PROJECT env var, resolution logic, backward compat.
 - **test_security.py** (12 tests) — Input validation and security edge cases.
 
 ## Shared Fixtures (`conftest.py`)
