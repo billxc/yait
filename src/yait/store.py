@@ -87,6 +87,53 @@ def get_display(root: Path) -> dict:
     return result
 
 
+_DEFAULT_WORKFLOW = {
+    "statuses": ["open", "closed"],
+    "closed_statuses": ["closed"],
+}
+
+
+def get_workflow(root: Path) -> dict:
+    """Read workflow configuration. Defaults to open/closed."""
+    cfg = _read_config(root)
+    saved = cfg.get("workflow") or {}
+    result = dict(_DEFAULT_WORKFLOW)
+    result.update(saved)
+    return result
+
+
+def resolve_status_filter(root: Path, status: str) -> list[str] | None:
+    """Resolve open/closed/specific status to a list of actual statuses.
+
+    - "open"  -> all non-closed statuses
+    - "closed" -> all closed statuses
+    - "in-progress" -> ["in-progress"] (exact match)
+    - "all" -> None (no filtering)
+    """
+    if status == "all":
+        return None
+    wf = get_workflow(root)
+    closed = set(wf["closed_statuses"])
+    all_s = wf["statuses"]
+    if status == "open":
+        return [s for s in all_s if s not in closed]
+    elif status == "closed":
+        return [s for s in all_s if s in closed]
+    elif status in all_s:
+        return [status]
+    else:
+        valid = ", ".join(all_s)
+        raise ValueError(f"Unknown status: '{status}'. Valid statuses: {valid}")
+
+
+def validate_status(root: Path, status: str) -> None:
+    """Validate that status is allowed by the workflow configuration."""
+    wf = get_workflow(root)
+    if status not in wf["statuses"]:
+        valid = ", ".join(wf["statuses"])
+        raise ValueError(f"Invalid status '{status}'. Valid: {valid}")
+
+
 def get_config_value(root: Path, key: str):
     """Get a config value by dotted key (e.g. 'defaults.type')."""
     parts = key.split(".", 1)
@@ -266,6 +313,7 @@ def list_issues(
     assignee: str | None = None,
     priority: str | None = None,
     milestone: str | None = None,
+    status_list: list[str] | None = None,
 ) -> list[Issue]:
     issues_path = _issues_dir(root)
     if not issues_path.exists():
@@ -275,7 +323,10 @@ def list_issues(
         if not p.stem.isdigit():
             continue
         issue = load_issue(root, int(p.stem))
-        if status and issue.status != status:
+        if status_list is not None:
+            if issue.status not in status_list:
+                continue
+        elif status and issue.status != status:
             continue
         if type and issue.type != type:
             continue

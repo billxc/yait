@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 ISSUE_TYPES = ("feature", "bug", "enhancement", "misc")
 PRIORITIES = ("p0", "p1", "p2", "p3", "none")
 MILESTONE_STATUSES = ("open", "closed")
+DEFAULT_STATUSES = ("open", "closed")
+DEFAULT_CLOSED_STATUSES = ("closed",)
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 LINK_TYPES = ("blocks", "blocked-by", "depends-on", "depended-by", "relates-to")
