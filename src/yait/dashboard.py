@@ -622,11 +622,11 @@ _STYLESHEET = """*{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg)}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
-  font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased;
   padding:0;
 }
-.page{max-width:1024px;margin:0 auto;padding:24px 24px 80px}
-.issue-page .page{max-width:860px}
+.page{max-width:1280px;margin:0 auto;padding:28px 40px 80px}
+.issue-page .page{max-width:1100px}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 code,kbd,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:.85em}
@@ -635,18 +635,18 @@ h1,h2,h3,h4{margin:0;font-weight:600;line-height:1.25}
 
 /* ======== Index ======== */
 .masthead{padding:8px 0 16px;border-bottom:1px solid var(--border);margin-bottom:20px}
-.masthead .brand{font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
+.masthead .brand{font-size:28px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
 .masthead .byline{margin-top:6px;font-size:12px;color:var(--fg-muted)}
 .masthead .byline code{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1px 5px;color:var(--fg)}
 
 section{margin:24px 0}
-section h2{font-size:16px;font-weight:600;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border-muted)}
+section h2{font-size:18px;font-weight:600;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border-muted)}
 
 /* Stats */
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:0;padding:0}
 .stats .stat{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
 .stats dt{font-size:12px;color:var(--fg-muted);font-weight:500;margin:0}
-.stats dd{font-size:24px;font-weight:600;color:var(--fg);margin:2px 0 0;line-height:1.2}
+.stats dd{font-size:28px;font-weight:600;color:var(--fg);margin:2px 0 0;line-height:1.2}
 @media (max-width:680px){.stats{grid-template-columns:repeat(2,1fr)}}
 
 /* Composition */
@@ -746,7 +746,7 @@ section h2{font-size:16px;font-weight:600;margin-bottom:12px;padding-bottom:6px;
 .nav-btn.disabled{opacity:.4;cursor:not-allowed;background:var(--bg-subtle)}
 
 .issue-head{margin-bottom:18px}
-.issue-title{font-size:24px;font-weight:600;color:var(--fg);line-height:1.3}
+.issue-title{font-size:28px;font-weight:600;color:var(--fg);line-height:1.3}
 .issue-title .issue-num{color:var(--fg-muted);font-weight:400}
 .issue-sub{margin-top:8px;display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
 .state-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:3px 10px;border-radius:999px;border:1px solid transparent}
@@ -768,9 +768,9 @@ section h2{font-size:16px;font-weight:600;margin-bottom:12px;padding-bottom:6px;
 
 .body-section{margin-bottom:18px}
 .md-body{
-  font-size:15px;line-height:1.6;color:var(--fg);
+  font-size:16px;line-height:1.65;color:var(--fg);
   background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px 20px;
+  padding:18px 22px;
 }
 .md-body.empty{color:var(--fg-muted);font-style:italic;background:var(--bg-subtle)}
 .md-body > *:first-child{margin-top:0}
