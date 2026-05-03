@@ -110,10 +110,10 @@ class TestIndexPage:
 
     def test_summary_cards(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
-        assert ">5</div>" in idx     # total
-        assert ">3</div>" in idx     # open
-        assert ">2</div>" in idx     # closed
-        assert ">40%</div>" in idx   # close rate
+        assert ">5</dd>" in idx       # total
+        assert ">3</dd>" in idx       # open
+        assert ">2</dd>" in idx       # closed
+        assert ">40%</dd>" in idx     # close rate
 
     def test_breakdown_present(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
@@ -123,7 +123,7 @@ class TestIndexPage:
 
     def test_milestone_progress(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
-        assert "Milestone Progress" in idx
+        assert "Milestone progress" in idx
         assert "v1.0" in idx and "v2.0" in idx
         assert "1/3 closed (33%)" in idx
         assert "0/0 closed (0%)" in idx
@@ -132,7 +132,7 @@ class TestIndexPage:
 
     def test_open_issues_table(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
-        assert "Open Issues" in idx
+        assert "Open issues" in idx
         assert "Login page broken" in idx
         assert "Add dark mode" in idx
         assert "API docs" in idx
@@ -143,7 +143,7 @@ class TestIndexPage:
 
     def test_recently_closed(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
-        assert "Recently Closed" in idx
+        assert "Recently closed" in idx
         assert "Fix typo in README" in idx
         assert "Improve performance" in idx
 
@@ -157,10 +157,11 @@ class TestIndexPage:
         for marker in ("filter-search", "filter-type", "filter-priority", "filter-assignee", "applyFilters()"):
             assert marker in idx
 
-    def test_milestone_accordion(self, dashboard_root, tmp_path):
+    def test_milestone_progressive_disclosure(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
-        assert "accordion-toggle" in idx
-        assert "toggleAccordion" in idx
+        # Milestones use <details>/<summary> for progressive disclosure
+        assert "<details" in idx
+        assert "<summary" in idx
 
     def test_data_attributes(self, dashboard_root, tmp_path):
         idx = self._index(dashboard_root, tmp_path)
@@ -172,8 +173,8 @@ class TestIndexPage:
         out = tmp_path / "snap"
         generate_dashboard(initialized_root, output_dir=out)
         idx = (out / "index.html").read_text()
-        assert ">0</div>" in idx
-        assert ">0%</div>" in idx
+        assert ">0</dd>" in idx
+        assert ">0%</dd>" in idx
         assert "No open milestones" in idx
         assert "No open issues" in idx
         assert "No closed issues" in idx
@@ -189,7 +190,7 @@ class TestIndexPage:
         out = tmp_path / "snap"
         generate_dashboard(initialized_root, output_dir=out)
         idx = (out / "index.html").read_text()
-        section = idx.split("Recently Closed")[1].split("</section>")[0]
+        section = idx.split("Recently closed")[1].split("</section>")[0]
         assert section.count("Closed issue") == 10
         assert "Closed issue 14" in section
 
@@ -212,17 +213,23 @@ class TestIssuePage:
         assert "alice" in page
         assert "v1.0" in page
         assert "urgent" in page
-        assert "p0" in page
+        assert "P0" in page  # priority shown uppercase on issue page
 
-    def test_issue_body_embedded_for_markdown_render(self, dashboard_root, tmp_path):
+    def test_issue_body_rendered_server_side(self, dashboard_root, tmp_path):
         page = self._page(dashboard_root, tmp_path, 1)
-        # Body is JSON-embedded so client-side marked.js can render it
-        assert "const BODY=" in page
-        assert "Reproduction" in page
-        # CDN scripts loaded
-        assert "marked" in page and "DOMPurify" in page
-        # Render target
+        # Markdown is pre-rendered to HTML — no client-side renderer needed
+        assert "<h1>Reproduction</h1>" in page
+        assert "<pre><code" in page  # fenced block
+        assert "<code>/login</code>" in page  # inline code
         assert 'id="md-body"' in page
+
+    def test_no_external_cdn_assets(self, dashboard_root, tmp_path):
+        page = self._page(dashboard_root, tmp_path, 1)
+        # Pages must be fully self-contained — no network requests at view time
+        assert "cdn.jsdelivr.net" not in page
+        assert "unpkg.com" not in page
+        assert "cdnjs" not in page
+        assert "https://" not in page  # no remote assets at all
 
     def test_back_link_to_index(self, dashboard_root, tmp_path):
         page = self._page(dashboard_root, tmp_path, 2)
@@ -237,16 +244,16 @@ class TestIssuePage:
     def test_first_issue_disables_prev(self, dashboard_root, tmp_path):
         page = self._page(dashboard_root, tmp_path, 1)
         assert 'href="2.html"' in page
-        assert 'class="nav-btn disabled">‹' in page
+        assert 'class="nav-btn disabled">←' in page
 
     def test_last_issue_disables_next(self, dashboard_root, tmp_path):
         page = self._page(dashboard_root, tmp_path, 5)
         assert 'href="4.html"' in page
-        assert 'class="nav-btn disabled">›' in page
+        assert 'class="nav-btn disabled">next' in page
 
     def test_quick_commands_present(self, dashboard_root, tmp_path):
         page = self._page(dashboard_root, tmp_path, 1)
-        assert "Quick Commands" in page
+        assert "Quick commands" in page
         assert "yait show 1" in page
         assert "yait close 1" in page
         assert "copyCmd" in page
@@ -277,7 +284,7 @@ class TestEscaping:
         assert "&lt;script&gt;" in idx
         assert '<script>alert("xss")</script>' not in idx
 
-    def test_xss_in_body_safely_embedded(self, initialized_root: Path, tmp_path):
+    def test_xss_in_body_safely_rendered(self, initialized_root: Path, tmp_path):
         save_issue(initialized_root, Issue(
             id=next_id(initialized_root), title="t", status="open",
             type="bug", priority="p0", created_at="2026-04-01",
@@ -286,9 +293,9 @@ class TestEscaping:
         out = tmp_path / "snap"
         generate_dashboard(initialized_root, output_dir=out)
         page = (out / "issues" / "1.html").read_text()
-        # </script> in body must be escaped to <\/script> inside the JSON literal
-        assert "</script><script>alert(1)" not in page
-        assert r"<\/script>" in page
+        # Body is rendered server-side and HTML-escaped — no executable script
+        assert "<script>alert(1)</script>" not in page
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
 
     def test_xss_in_project_name(self, initialized_root: Path, tmp_path):
         out = tmp_path / "snap"

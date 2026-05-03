@@ -1,18 +1,15 @@
 """Generate a multi-page HTML dashboard snapshot for a yait project.
 
-Layout written into ``output_dir`` (default ``<root>/dashboard/``)::
-
-    dashboard/
-      .gitignore                ("*" — whole snapshot is excluded from git)
-      index.html                (overview + tables linking to issue pages)
-      assets/style.css          (shared stylesheet)
-      issues/<id>.html          (one page per issue with rendered markdown body)
+Visual: GitHub-style minimal — white background, system sans-serif,
+blue accent. Markdown is rendered server-side (no CDN, no runtime JS
+for content). Pages are fully self-contained: no network requests.
 """
 
 from __future__ import annotations
 
 import html
 import json
+import re
 import shutil
 from collections import Counter
 from datetime import datetime, timezone
@@ -26,7 +23,6 @@ def generate_dashboard(
     output_dir: Path | None = None,
     project_name: str = "",
 ) -> Path:
-    """Render dashboard snapshot under ``output_dir``. Returns path to ``index.html``."""
     if output_dir is None:
         output_dir = Path(root) / "dashboard"
     output_dir = Path(output_dir)
@@ -78,51 +74,129 @@ def _safe_json(obj) -> str:
     return json.dumps(obj, ensure_ascii=False).replace("</", r"<\/")
 
 
-def _issue_href(issue_id: int, *, from_index: bool) -> str:
-    return f"issues/{issue_id}.html" if from_index else f"{issue_id}.html"
+def _short_date(s: str) -> str:
+    return s[:10] if s else ""
 
 
-def _bar_section(label: str, counts: dict, color_map: dict) -> str:
-    if not counts:
-        return f'<h3>{_esc(label)}</h3><p class="muted">No data</p>'
-    max_val = max(counts.values()) if counts else 1
-    rows = []
-    for name, count in sorted(counts.items(), key=lambda x: -x[1]):
-        pct = round(count / max_val * 100) if max_val else 0
-        color = color_map.get(name, "#6b7280")
-        rows.append(
-            f'<div class="bar-row">'
-            f'<span class="bar-label">{_esc(name)}</span>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;background:{color}"></div></div>'
-            f'<span class="bar-value">{count}</span>'
-            f'</div>'
-        )
-    return f'<h3>{_esc(label)}</h3>' + "\n".join(rows)
+_PRIORITY_RANK = {"p0": 0, "p1": 1, "p2": 2, "p3": 3, "none": 4}
 
 
-def _badge(value: str, kind: str) -> str:
-    return f'<span class="chip chip-{kind} chip-{kind}-{_esc(value)}">{_esc(value)}</span>'
+# ---------------------------------------------------------------- markdown
 
+def render_markdown(text: str) -> str:
+    """Render a useful subset of GFM to safe HTML, server-side.
 
-def _label_chips(labels) -> str:
-    if not labels:
+    Supports: ATX headings, fenced code blocks (```lang), blockquotes,
+    unordered/ordered lists, horizontal rules, paragraphs, hard breaks,
+    inline code, bold, italic, and ``[text](url)`` links. All output is
+    HTML-escaped before inline transforms run, so user content cannot
+    inject tags.
+    """
+    if not text:
         return ""
-    return " ".join(f'<span class="chip chip-label">{_esc(l)}</span>' for l in labels)
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        m = re.match(r"^```\s*([\w+-]*)\s*$", line)
+        if m:
+            lang = m.group(1)
+            i += 1
+            buf: list[str] = []
+            while i < n and not re.match(r"^```\s*$", lines[i]):
+                buf.append(lines[i])
+                i += 1
+            if i < n:
+                i += 1  # closing fence
+            cls = f' class="language-{html.escape(lang)}"' if lang else ""
+            out.append(
+                f'<pre><code{cls}>{html.escape("\n".join(buf))}</code></pre>'
+            )
+            continue
+        m = re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if m:
+            lvl = len(m.group(1))
+            out.append(f"<h{lvl}>{_inline(m.group(2))}</h{lvl}>")
+            i += 1
+            continue
+        if re.match(r"^\s{0,3}([-*_])\s*\1\s*\1[\s\-*_]*$", line):
+            out.append("<hr>")
+            i += 1
+            continue
+        if line.startswith(">"):
+            buf = []
+            while i < n and lines[i].startswith(">"):
+                buf.append(lines[i].lstrip(">").lstrip())
+                i += 1
+            out.append(f"<blockquote>{render_markdown(chr(10).join(buf))}</blockquote>")
+            continue
+        if re.match(r"^[-*+]\s+", line):
+            items = []
+            while i < n and re.match(r"^[-*+]\s+", lines[i]):
+                items.append(_inline(re.sub(r"^[-*+]\s+", "", lines[i])))
+                i += 1
+            out.append("<ul>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>")
+            continue
+        if re.match(r"^\d+\.\s+", line):
+            items = []
+            while i < n and re.match(r"^\d+\.\s+", lines[i]):
+                items.append(_inline(re.sub(r"^\d+\.\s+", "", lines[i])))
+                i += 1
+            out.append("<ol>" + "".join(f"<li>{x}</li>" for x in items) + "</ol>")
+            continue
+        if not line.strip():
+            i += 1
+            continue
+        buf = []
+        while i < n and lines[i].strip() and not _is_block_start(lines[i]):
+            buf.append(lines[i])
+            i += 1
+        out.append(f"<p>{_inline(chr(10).join(buf))}</p>")
+    return "\n".join(out)
 
 
-_TYPE_COLORS = {
-    "bug": "#ef4444",
-    "feature": "#3b82f6",
-    "enhancement": "#8b5cf6",
-    "misc": "#6b7280",
-}
-_PRIORITY_COLORS = {
-    "p0": "#ef4444",
-    "p1": "#f59e0b",
-    "p2": "#3b82f6",
-    "p3": "#6b7280",
-    "none": "#9ca3af",
-}
+def _is_block_start(line: str) -> bool:
+    return bool(
+        re.match(r"^```", line)
+        or re.match(r"^#{1,6}\s+", line)
+        or re.match(r"^\s{0,3}([-*_])\s*\1\s*\1[\s\-*_]*$", line)
+        or line.startswith(">")
+        or re.match(r"^[-*+]\s+", line)
+        or re.match(r"^\d+\.\s+", line)
+    )
+
+
+def _inline(text: str) -> str:
+    text = html.escape(text)
+    placeholders: list[str] = []
+
+    def stash(html_str: str) -> str:
+        placeholders.append(html_str)
+        return f"\x00{len(placeholders) - 1}\x00"
+
+    text = re.sub(r"`([^`]+)`", lambda m: stash(f"<code>{m.group(1)}</code>"), text)
+    text = re.sub(
+        r"\[([^\]]+)\]\(([^)\s]+)\)",
+        lambda m: stash(f'<a href="{html.escape(m.group(2), quote=True)}">{m.group(1)}</a>'),
+        text,
+    )
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"__(.+?)__", r"<strong>\1</strong>", text)
+    text = re.sub(r"(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])", r"<em>\1</em>", text)
+    text = re.sub(r"(?<![_\w])_([^_\s][^_]*?)_(?![_\w])", r"<em>\1</em>", text)
+    text = text.replace("  \n", "<br>\n")
+    text = re.sub(r"\x00(\d+)\x00", lambda m: placeholders[int(m.group(1))], text)
+    return text
+
+
+# ---------------------------------------------------------------- helpers
+
+def _ascii_bar(pct: int, width: int = 16) -> str:
+    pct = max(0, min(100, pct))
+    filled = round(pct * width / 100)
+    return "█" * filled + "░" * (width - filled)
 
 
 def _page_head(title: str, css_href: str) -> str:
@@ -135,6 +209,8 @@ def _page_head(title: str, css_href: str) -> str:
 <link rel="stylesheet" href="{css_href}">
 </head>"""
 
+
+# ---------------------------------------------------------------- index
 
 def _render_index(
     *,
@@ -156,8 +232,38 @@ def _render_index(
 
     type_counts = Counter(i.type for i in all_issues)
     priority_counts = Counter(i.priority for i in all_issues)
-    type_section = _bar_section("By Type", dict(type_counts), _TYPE_COLORS)
-    priority_section = _bar_section("By Priority", dict(priority_counts), _PRIORITY_COLORS)
+
+    stats_html = (
+        '<dl class="stats">'
+        f'<div class="stat"><dt>Total</dt><dd>{total}</dd></div>'
+        f'<div class="stat"><dt>Open</dt><dd>{open_count}</dd></div>'
+        f'<div class="stat"><dt>Closed</dt><dd>{closed_count}</dd></div>'
+        f'<div class="stat"><dt>Close rate</dt><dd>{close_rate}%</dd></div>'
+        '</dl>'
+    )
+
+    def _count_block(label: str, counts: Counter) -> str:
+        if not counts:
+            return f'<div class="block"><h3>{_esc(label)}</h3><p class="muted">No data</p></div>'
+        max_v = max(counts.values())
+        rows = []
+        for name, n in sorted(counts.items(), key=lambda x: -x[1]):
+            pct = round(n / max_v * 100) if max_v else 0
+            rows.append(
+                f'<div class="count-row">'
+                f'<span class="count-name">{_esc(name)}</span>'
+                f'<span class="count-bar"><span class="count-bar-fill" style="width:{pct}%"></span></span>'
+                f'<span class="count-num">{n}</span>'
+                f'</div>'
+            )
+        return f'<div class="block"><h3>{_esc(label)}</h3>' + "".join(rows) + "</div>"
+
+    breakdown_html = (
+        '<div class="two-col">'
+        + _count_block("By Type", type_counts)
+        + _count_block("By Priority", priority_counts)
+        + '</div>'
+    )
 
     open_milestones = [m for m in milestones if m.status == "open"]
     if open_milestones:
@@ -167,79 +273,87 @@ def _render_index(
             ms_total = len(ms_issues)
             ms_closed = sum(1 for i in ms_issues if i.status == "closed")
             pct = round(ms_closed / ms_total * 100) if ms_total else 0
-            due = f' &middot; Due: {_esc(m.due_date)}' if m.due_date else ""
-
-            li_items = ""
+            due = f' · due {_esc(m.due_date)}' if m.due_date else ""
+            child_items = ""
             for mi in sorted(ms_issues, key=lambda x: x.id):
-                cls = "ms-issue-closed" if mi.status == "closed" else ""
-                li_items += (
-                    f'<li class="{cls}"><a href="{_issue_href(mi.id, from_index=True)}">'
-                    f'#{mi.id} {_esc(mi.title)}</a></li>'
+                cls = " done" if mi.status == "closed" else ""
+                child_items += (
+                    f'<li class="ms-li{cls}">'
+                    f'<a href="issues/{mi.id}.html">'
+                    f'<span class="num">#{mi.id}</span> {_esc(mi.title)}</a></li>'
                 )
-            issue_list = (
-                f'<ul class="ms-issue-list" style="display:none">{li_items}</ul>'
-                if li_items else ""
-            )
-            toggle_attr = ' onclick="toggleAccordion(this)"' if li_items else ""
-            toggle_cls = " accordion-toggle" if li_items else ""
             rows.append(
-                f'<div class="ms-item">'
-                f'<div class="ms-header{toggle_cls}"{toggle_attr}>'
+                f'<details class="ms-details"><summary>'
                 f'<span class="ms-name">{_esc(m.name)}</span>'
+                f'<span class="ms-progress"><span class="ms-progress-fill" style="width:{pct}%"></span></span>'
                 f'<span class="ms-stats">{ms_closed}/{ms_total} closed ({pct}%){due}</span>'
-                f'</div>'
-                f'<div class="bar-track"><div class="bar-fill bar-fill-ms" style="width:{pct}%"></div></div>'
-                f'{issue_list}'
-                f'</div>'
+                f'</summary>'
+                f'<ul class="ms-children">{child_items or "<li class=\"muted\">no issues</li>"}</ul>'
+                f'</details>'
             )
-        ms_html = "\n".join(rows)
+        ms_html = "".join(rows)
     else:
         ms_html = '<p class="muted">No open milestones</p>'
 
     types_set = sorted(set(i.type for i in open_issues))
-    priorities_set = sorted(set(i.priority for i in open_issues))
+    priorities_set = sorted(
+        set(i.priority for i in open_issues), key=lambda p: _PRIORITY_RANK.get(p, 99)
+    )
     assignees_set = sorted(set(i.assignee for i in open_issues if i.assignee))
 
-    def _options(values):
+    def _opts(values):
         return "".join(f'<option value="{_esc(v)}">{_esc(v)}</option>' for v in values)
 
     filter_bar = (
         '<div class="filter-bar">'
-        '<input type="text" id="filter-search" placeholder="Search title, label, assignee..." oninput="applyFilters()">'
-        '<select id="filter-type" onchange="applyFilters()"><option value="">All Types</option>'
-        + _options(types_set) + '</select>'
-        '<select id="filter-priority" onchange="applyFilters()"><option value="">All Priorities</option>'
-        + _options(priorities_set) + '</select>'
-        '<select id="filter-assignee" onchange="applyFilters()"><option value="">All Assignees</option>'
-        + _options(assignees_set) + '</select>'
+        '<input type="text" id="filter-search" placeholder="Filter issues" oninput="applyFilters()">'
+        '<select id="filter-type" onchange="applyFilters()"><option value="">All types</option>'
+        + _opts(types_set) + '</select>'
+        '<select id="filter-priority" onchange="applyFilters()"><option value="">All priorities</option>'
+        + _opts(priorities_set) + '</select>'
+        '<select id="filter-assignee" onchange="applyFilters()"><option value="">All assignees</option>'
+        + _opts(assignees_set) + '</select>'
         '</div>'
     )
 
-    open_sorted = sorted(open_issues, key=lambda i: i.id)
-    if open_sorted:
-        rows = []
-        for i in open_sorted:
-            href = _issue_href(i.id, from_index=True)
-            rows.append(
-                f'<tr data-type="{_esc(i.type)}" data-priority="{_esc(i.priority)}" data-assignee="{_esc(i.assignee or "")}">'
-                f'<td class="col-id">#{i.id}</td>'
-                f'<td><a class="issue-link" href="{href}">{_esc(i.title)}</a> {_label_chips(i.labels)}</td>'
-                f'<td>{_badge(i.type, "type")}</td>'
-                f'<td>{_badge(i.priority, "prio")}</td>'
-                f'<td>{_esc(i.assignee or "—")}</td>'
-                f'<td class="col-date">{_esc(i.created_at[:10] if i.created_at else "")}</td>'
-                f'</tr>'
+    if open_issues:
+        groups: dict[str, list] = {}
+        for i in open_issues:
+            groups.setdefault(i.priority, []).append(i)
+        group_keys = sorted(groups.keys(), key=lambda p: _PRIORITY_RANK.get(p, 99))
+        sections = []
+        for pkey in group_keys:
+            issues_g = sorted(groups[pkey], key=lambda x: x.id)
+            issue_rows = []
+            for i in issues_g:
+                labels = (
+                    " ".join(f'<span class="tag">{_esc(l)}</span>' for l in i.labels)
+                    if i.labels else ""
+                )
+                issue_rows.append(
+                    f'<li data-type="{_esc(i.type)}" data-priority="{_esc(i.priority)}" data-assignee="{_esc(i.assignee or "")}">'
+                    f'<a class="row" href="issues/{i.id}.html">'
+                    f'<span class="status-dot status-open"></span>'
+                    f'<span class="num">#{i.id}</span>'
+                    f'<span class="title">{_esc(i.title)} {labels}</span>'
+                    f'<span class="meta-cell type">{_esc(i.type)}</span>'
+                    f'<span class="meta-cell who">{_esc(i.assignee or "—")}</span>'
+                    f'<span class="meta-cell when">{_esc(_short_date(i.created_at))}</span>'
+                    f'</a></li>'
+                )
+            label = pkey.upper() if pkey != "none" else "No priority"
+            sections.append(
+                f'<div class="prio-group" data-prio-group="{_esc(pkey)}">'
+                f'<h4 class="prio-label prio-{_esc(pkey)}">{label} <span class="muted">· {len(issues_g)}</span></h4>'
+                f'<ul class="issue-list">' + "".join(issue_rows) + '</ul>'
+                f'</div>'
             )
-        open_table = (
+        open_html = (
             filter_bar
-            + '<div class="table-wrap"><table id="open-issues-table"><thead><tr>'
-            '<th>ID</th><th>Title</th><th>Type</th><th>Priority</th><th>Assignee</th><th>Created</th>'
-            '</tr></thead><tbody>'
-            + "\n".join(rows)
-            + '</tbody></table></div>'
+            + '<div id="open-issues" class="open-issues">' + "".join(sections) + '</div>'
         )
     else:
-        open_table = '<p class="muted">No open issues</p>'
+        open_html = '<p class="muted">No open issues</p>'
 
     recently_closed = sorted(
         closed_issues,
@@ -249,77 +363,70 @@ def _render_index(
     if recently_closed:
         rows = []
         for i in recently_closed:
-            href = _issue_href(i.id, from_index=True)
             rows.append(
-                f'<tr>'
-                f'<td class="col-id">#{i.id}</td>'
-                f'<td><a class="issue-link" href="{href}">{_esc(i.title)}</a></td>'
-                f'<td>{_badge(i.type, "type")}</td>'
-                f'<td class="col-date">{_esc((i.updated_at or i.created_at)[:10])}</td>'
-                f'</tr>'
+                f'<li><a class="row" href="issues/{i.id}.html">'
+                f'<span class="status-dot status-closed"></span>'
+                f'<span class="num">#{i.id}</span>'
+                f'<span class="title">{_esc(i.title)}</span>'
+                f'<span class="meta-cell type">{_esc(i.type)}</span>'
+                f'<span class="meta-cell when">{_esc(_short_date(i.updated_at or i.created_at))}</span>'
+                f'</a></li>'
             )
-        closed_table = (
-            '<div class="table-wrap"><table><thead><tr>'
-            '<th>ID</th><th>Title</th><th>Type</th><th>Closed</th>'
-            '</tr></thead><tbody>'
-            + "\n".join(rows)
-            + '</tbody></table></div>'
-        )
+        closed_html = '<ul class="issue-list closed-list">' + "".join(rows) + '</ul>'
     else:
-        closed_table = '<p class="muted">No closed issues</p>'
+        closed_html = '<p class="muted">No closed issues</p>'
 
     head = _page_head(title_text, "assets/style.css")
     return f"""{head}
-<body>
-<div class="container">
-<header>
-<div>
-<h1>{title_text}</h1>
-<div class="timestamp">Generated: {_esc(now_str)} &middot; <span class="muted">snapshot — re-run <code>yait dashboard</code> to refresh</span></div>
-</div>
+<body class="index-page">
+<div class="page">
+
+<header class="masthead">
+<h1 class="brand">{title_text}</h1>
+<div class="byline">{_esc(now_str)} · snapshot · re-run <code>yait dashboard</code> to refresh</div>
 </header>
 
-<div class="cards">
-<div class="card"><div class="label">Total</div><div class="value">{total}</div></div>
-<div class="card accent"><div class="label">Open</div><div class="value">{open_count}</div></div>
-<div class="card ok"><div class="label">Closed</div><div class="value">{closed_count}</div></div>
-<div class="card warn"><div class="label">Close Rate</div><div class="value">{close_rate}%</div></div>
-</div>
+<section class="overview">{stats_html}</section>
 
-<div class="grid-2">
-<section><h2>Breakdown</h2>{type_section}{priority_section}</section>
-<section><h2>Milestone Progress</h2>{ms_html}</section>
-</div>
+<section><h2>Composition</h2>{breakdown_html}</section>
 
-<section><h2>Open Issues</h2>{open_table}</section>
-<section><h2>Recently Closed</h2>{closed_table}</section>
+<section><h2>Milestone progress</h2><div class="milestones">{ms_html}</div></section>
+
+<section><h2>Open issues <span class="muted">· {open_count}</span></h2>{open_html}</section>
+
+<section><h2>Recently closed</h2>{closed_html}</section>
+
+<footer class="colophon">Generated {_esc(now_str)}</footer>
+
 </div>
 
 <script>
-function toggleAccordion(el){{
-  var list=el.parentElement.querySelector('.ms-issue-list');
-  if(list)list.style.display=list.style.display==='none'?'block':'none';
-}}
 function applyFilters(){{
-  var search=(document.getElementById('filter-search').value||'').toLowerCase();
-  var type=document.getElementById('filter-type').value;
-  var priority=document.getElementById('filter-priority').value;
-  var assignee=document.getElementById('filter-assignee').value;
-  var tbl=document.getElementById('open-issues-table');
-  if(!tbl)return;
-  tbl.querySelectorAll('tbody tr').forEach(function(r){{
-    var show=true;
-    if(type&&r.getAttribute('data-type')!==type)show=false;
-    if(priority&&r.getAttribute('data-priority')!==priority)show=false;
-    if(assignee&&r.getAttribute('data-assignee')!==assignee)show=false;
-    if(search&&r.textContent.toLowerCase().indexOf(search)===-1)show=false;
-    r.style.display=show?'':'none';
+  var s=(document.getElementById('filter-search').value||'').toLowerCase();
+  var t=document.getElementById('filter-type').value;
+  var p=document.getElementById('filter-priority').value;
+  var a=document.getElementById('filter-assignee').value;
+  var root=document.getElementById('open-issues');
+  if(!root)return;
+  root.querySelectorAll('li[data-type]').forEach(function(li){{
+    var ok=true;
+    if(t&&li.getAttribute('data-type')!==t)ok=false;
+    if(p&&li.getAttribute('data-priority')!==p)ok=false;
+    if(a&&li.getAttribute('data-assignee')!==a)ok=false;
+    if(s&&li.textContent.toLowerCase().indexOf(s)===-1)ok=false;
+    li.style.display=ok?'':'none';
+  }});
+  root.querySelectorAll('.prio-group').forEach(function(g){{
+    var visible=g.querySelectorAll('li[data-type]:not([style*="display: none"])').length;
+    g.style.display=visible?'':'none';
   }});
 }}
 </script>
 </body>
 </html>"""
 
+
+# ---------------------------------------------------------------- issue page
 
 def _render_issue_page(
     issue,
@@ -330,7 +437,8 @@ def _render_issue_page(
     issue_titles: dict,
     issue_statuses: dict,
 ) -> str:
-    title_text = f"#{issue.id} · {_esc(issue.title)}"
+    title_text = f"#{issue.id} — {_esc(issue.title)}"
+    project_label = _esc(project_name) if project_name else "local"
 
     sorted_ids = sorted(issue_titles.keys())
     pos = sorted_ids.index(issue.id) if issue.id in sorted_ids else -1
@@ -338,52 +446,64 @@ def _render_issue_page(
     next_id_ = sorted_ids[pos + 1] if 0 <= pos < len(sorted_ids) - 1 else None
 
     nav_prev = (
-        f'<a class="nav-btn" href="{prev_id}.html" title="Previous issue">‹ #{prev_id}</a>'
-        if prev_id else '<span class="nav-btn disabled">‹</span>'
+        f'<a class="nav-btn" href="{prev_id}.html">← #{prev_id}</a>'
+        if prev_id else '<span class="nav-btn disabled">← prev</span>'
     )
     nav_next = (
-        f'<a class="nav-btn" href="{next_id_}.html" title="Next issue">#{next_id_} ›</a>'
-        if next_id_ else '<span class="nav-btn disabled">›</span>'
+        f'<a class="nav-btn" href="{next_id_}.html">#{next_id_} →</a>'
+        if next_id_ else '<span class="nav-btn disabled">next →</span>'
     )
 
-    badges = (
-        f'<span class="chip chip-status chip-status-{_esc(issue.status)}">{_esc(issue.status)}</span>'
-        + _badge(issue.type, "type")
-        + _badge(issue.priority, "prio")
-        + (_label_chips(issue.labels))
+    state_cls = f"state-{_esc(issue.status)}"
+    state_label = issue.status.capitalize()
+
+    labels_html = (
+        " ".join(f'<span class="tag">{_esc(l)}</span>' for l in issue.labels)
+        if issue.labels else '<span class="muted">—</span>'
     )
 
-    meta = (
-        f'<div><b>Assignee:</b> {_esc(issue.assignee or "—")}</div>'
-        f'<div><b>Milestone:</b> {_esc(issue.milestone or "—")}</div>'
-        f'<div><b>Created:</b> {_esc(issue.created_at or "—")}</div>'
-        f'<div><b>Updated:</b> {_esc(issue.updated_at or "—")}</div>'
+    meta_rows = [
+        ("Assignee", _esc(issue.assignee or "—")),
+        ("Milestone", _esc(issue.milestone or "—")),
+        ("Type", _esc(issue.type)),
+        ("Priority", _esc(issue.priority).upper() if issue.priority != "none" else "—"),
+        ("Labels", labels_html),
+        ("Created", _esc(issue.created_at or "—")),
+        ("Updated", _esc(issue.updated_at or "—")),
+    ]
+    meta_html = "".join(
+        f'<div class="m-row"><dt>{k}</dt><dd>{v}</dd></div>' for k, v in meta_rows
     )
+
+    body_rendered = render_markdown(issue.body) if issue.body and issue.body.strip() else ""
 
     if issue.links:
         link_items = []
         for l in issue.links:
             tgt = l.get("target")
-            link_type = l.get("type", "")
-            tgt_title = issue_titles.get(tgt, "")
-            tgt_status = issue_statuses.get(tgt, "")
-            tgt_label = f"#{tgt} {tgt_title}" if tgt_title else f"#{tgt}"
-            cls = "ms-issue-closed" if tgt_status == "closed" else ""
+            ltype = l.get("type", "")
+            ttitle = issue_titles.get(tgt, "")
+            tstatus = issue_statuses.get(tgt, "")
+            cls = " done" if tstatus == "closed" else ""
+            label = f"#{tgt} {ttitle}" if ttitle else f"#{tgt}"
             link_items.append(
-                f'<li class="{cls}"><span class="link-type">{_esc(link_type)}</span> '
-                f'<a href="{tgt}.html">{_esc(tgt_label)}</a></li>'
+                f'<li class="link-li{cls}">'
+                f'<span class="link-type">{_esc(ltype)}</span>'
+                f'<a href="{tgt}.html">{_esc(label)}</a></li>'
             )
         links_html = (
-            '<section><h2>Links</h2><ul class="link-list">' + "".join(link_items) + "</ul></section>"
+            '<section class="aside-block"><h3>Linked issues</h3>'
+            '<ul class="link-list">' + "".join(link_items) + '</ul></section>'
         )
     else:
         links_html = ""
 
     if issue.docs:
         docs_html = (
-            '<section><h2>Docs</h2><ul class="link-list">'
+            '<section class="aside-block"><h3>Docs</h3>'
+            '<ul class="link-list">'
             + "".join(f'<li>{_esc(d)}</li>' for d in issue.docs)
-            + "</ul></section>"
+            + '</ul></section>'
         )
     else:
         docs_html = ""
@@ -401,71 +521,75 @@ def _render_issue_page(
         f"yait {pfx}label add {issue.id} ",
     ]
     cmd_html = "".join(
-        f'<div class="cmd" onclick="copyCmd(this)">{_esc(c)}</div>' for c in cmds
+        f'<li><code class="cmd" onclick="copyCmd(this)">{_esc(c)}</code></li>'
+        for c in cmds
     )
 
-    body_json = _safe_json(issue.body or "")
+    body_block = (
+        f'<div id="md-body" class="md-body">{body_rendered}</div>'
+        if body_rendered
+        else '<div id="md-body" class="md-body empty">No description.</div>'
+    )
+
     head = _page_head(title_text, "../assets/style.css")
     return f"""{head}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <body class="issue-page">
-<div class="container narrow">
-<header class="issue-header">
-<div class="breadcrumb"><a href="../index.html">← Dashboard</a></div>
-<div class="nav-pair">{nav_prev}{nav_next}</div>
+<div class="page">
+
+<header class="topbar">
+<a class="crumb" href="../index.html">← Dashboard</a>
+<span class="sep">/</span>
+<span class="proj">{project_label}</span>
+<span class="sep">/</span>
+<span class="here">issue {issue.id}</span>
+<span class="spacer"></span>
+<nav class="topnav">{nav_prev}{nav_next}</nav>
 </header>
 
-<h1 class="issue-title">{title_text}</h1>
-<div class="badges">{badges}</div>
-<div class="meta">{meta}</div>
+<article class="issue">
 
-<section><h2>Description</h2>
-<div id="md-body" class="md-body"></div>
+<header class="issue-head">
+<h1 class="issue-title">{_esc(issue.title)} <span class="issue-num">#{issue.id}</span></h1>
+<div class="issue-sub">
+<span class="state-badge {state_cls}">{state_label}</span>
+<span class="muted">opened {_esc(_short_date(issue.created_at))}{(" · updated " + _esc(_short_date(issue.updated_at))) if issue.updated_at and issue.updated_at != issue.created_at else ""}</span>
+</div>
+</header>
+
+<dl class="meta-grid">{meta_html}</dl>
+
+<section class="body-section">
+<h3 class="section-label">Description</h3>
+{body_block}
 </section>
 
 {links_html}
 {docs_html}
 
-<section>
-<h2>Quick Commands</h2>
-<div class="commands-grid">{cmd_html}</div>
+<section class="aside-block">
+<h3>Quick commands <span class="muted">· click to copy</span></h3>
+<ul class="cmd-list">{cmd_html}</ul>
 </section>
 
-<footer class="page-footer">Snapshot: {_esc(now_str)}</footer>
+</article>
+
+<footer class="colophon">Snapshot {_esc(now_str)} · <a href="../index.html">back to dashboard</a></footer>
+
 </div>
 
 <script>
-const BODY={body_json};
 function copyCmd(el){{
   navigator.clipboard.writeText(el.textContent.trim());
   var orig=el.textContent;
-  el.textContent='\\u2713 Copied!';
+  el.textContent='✓ copied';
   el.classList.add('copied');
-  setTimeout(function(){{el.textContent=orig;el.classList.remove('copied')}},1500);
+  setTimeout(function(){{el.textContent=orig;el.classList.remove('copied')}},1400);
 }}
-function renderBody(){{
-  var el=document.getElementById('md-body');
-  if(!BODY||!BODY.trim()){{el.classList.add('empty');el.textContent='No description';return}}
-  if(window.marked&&window.DOMPurify){{
-    if(window.hljs){{
-      marked.setOptions({{gfm:true,breaks:false,highlight:function(c,l){{
-        try{{return l&&hljs.getLanguage(l)?hljs.highlight(c,{{language:l}}).value:hljs.highlightAuto(c).value}}catch(e){{return c}}
-      }}}});
-    }}
-    el.innerHTML=DOMPurify.sanitize(marked.parse(BODY),{{ADD_ATTR:['target']}});
-    if(window.hljs)el.querySelectorAll('pre code').forEach(function(b){{try{{hljs.highlightElement(b)}}catch(e){{}}}});
-  }}else{{
-    var pre=document.createElement('pre');pre.textContent=BODY;el.appendChild(pre);
-  }}
-}}
-renderBody();
 document.addEventListener('keydown',function(e){{
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
-  if(e.key==='ArrowLeft'){{var p=document.querySelector('.nav-btn[href]:not(.disabled)');if(p&&p.textContent.indexOf('‹')===0)location.href=p.getAttribute('href')}}
-  if(e.key==='ArrowRight'){{var ns=document.querySelectorAll('.nav-btn[href]:not(.disabled)');ns.forEach(function(n){{if(n.textContent.indexOf('›')!==-1)location.href=n.getAttribute('href')}})}}
+  var nav=document.querySelectorAll('.topnav .nav-btn');
+  if(e.key==='ArrowLeft'){{nav.forEach(function(n){{if(n.tagName==='A'&&n.textContent.indexOf('←')!==-1)location.href=n.getAttribute('href')}})}}
+  if(e.key==='ArrowRight'){{nav.forEach(function(n){{if(n.tagName==='A'&&n.textContent.indexOf('→')!==-1)location.href=n.getAttribute('href')}})}}
   if(e.key==='Escape')location.href='../index.html';
 }});
 </script>
@@ -473,121 +597,230 @@ document.addEventListener('keydown',function(e){{
 </html>"""
 
 
-_STYLESHEET = """*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0b1220;--panel:#111a2e;--panel2:#16223b;--border:#26334d;--text:#e6edf7;--muted:#8a9ab5;--accent:#60a5fa;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444}
-html,body{height:100%}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;background:radial-gradient(1200px 600px at 10% -10%,#1b2547 0,transparent 60%),radial-gradient(900px 500px at 90% 0%,#1a1d3a 0,transparent 60%),var(--bg);color:var(--text);padding:1.5rem;line-height:1.55;-webkit-font-smoothing:antialiased}
-.container{max-width:1180px;margin:0 auto}
-.container.narrow{max-width:880px}
-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1.5rem;gap:1rem;flex-wrap:wrap}
-header h1{font-size:1.6rem;font-weight:700;color:#fff;letter-spacing:-.01em}
-header .timestamp{font-size:.8rem;color:var(--muted)}
-header .timestamp code{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0a1226;border:1px solid var(--border);border-radius:.3rem;padding:1px 6px;font-size:.78rem}
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.25rem}
-.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);border-radius:.75rem;padding:1rem 1.25rem}
-.card .label{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
-.card .value{font-size:2rem;font-weight:700;color:#fff;margin-top:.15rem;line-height:1.1}
-.card.accent .value{color:var(--accent)}
-.card.ok .value{color:var(--ok)}
-.card.warn .value{color:var(--warn)}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem}
-@media (max-width:860px){.grid-2{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}}
-section{background:var(--panel);border:1px solid var(--border);border-radius:.75rem;padding:1.25rem 1.5rem;margin-bottom:1rem}
-h2{font-size:1rem;font-weight:600;color:#fff;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
-h2::before{content:"";display:inline-block;width:3px;height:14px;background:var(--accent);border-radius:2px}
-h3{font-size:.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.9rem 0 .4rem}
-.bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.35rem}
-.bar-label{width:90px;font-size:.8rem;color:var(--muted);text-align:right}
-.bar-track{flex:1;height:8px;background:#1f2a44;border-radius:999px;overflow:hidden}
-.bar-fill{height:100%;border-radius:999px;transition:width .4s ease}
-.bar-fill-ms{background:linear-gradient(90deg,var(--accent),var(--ok))}
-.bar-value{width:32px;font-size:.8rem;color:var(--text);font-variant-numeric:tabular-nums;text-align:right}
-.ms-item{margin-bottom:.9rem}
-.ms-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.3rem;gap:.5rem}
-.ms-header.accordion-toggle{cursor:pointer;user-select:none}
-.ms-header.accordion-toggle:hover .ms-name{color:var(--accent)}
-.ms-name{font-weight:600;color:#fff;font-size:.9rem;transition:color .15s}
-.ms-stats{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
-.ms-issue-list{list-style:none;padding:.5rem 0 0 .75rem;font-size:.85rem;border-left:2px solid var(--border);margin-left:.25rem;margin-top:.5rem}
-.ms-issue-list li{padding:.18rem 0}
-.ms-issue-list li a{color:var(--accent);text-decoration:none}
-.ms-issue-list li a:hover{text-decoration:underline}
-.ms-issue-list li.ms-issue-closed a{color:var(--muted);text-decoration:line-through}
-.table-wrap{overflow-x:auto;border-radius:.5rem}
-table{width:100%;border-collapse:collapse;font-size:.85rem}
-th{text-align:left;padding:.55rem .75rem;border-bottom:1px solid var(--border);color:var(--muted);font-weight:600;text-transform:uppercase;font-size:.7rem;letter-spacing:.06em;background:#0e1830}
-td{padding:.55rem .75rem;border-bottom:1px solid #1a2540;vertical-align:middle}
-tbody tr{transition:background .15s}
-tbody tr:hover td{background:#162243}
-.col-id{font-variant-numeric:tabular-nums;color:var(--muted);width:64px;font-weight:600}
-.col-date{color:var(--muted);font-size:.78rem;white-space:nowrap}
-.muted{color:var(--muted);font-size:.85rem}
-.issue-link{color:#cfe1ff;text-decoration:none;font-weight:500}
-.issue-link:hover{color:var(--accent);text-decoration:underline}
-.chip{display:inline-block;font-size:.68rem;padding:2px 8px;border-radius:999px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;line-height:1.4;border:1px solid transparent}
-.chip-label{background:#1c2a4a;color:#bcd1ff;border-color:#2a3a60;text-transform:none;letter-spacing:0;font-weight:500;margin-left:.25rem}
-.chip-status-open{background:rgba(34,197,94,.18);color:#86efac;border-color:rgba(34,197,94,.35)}
-.chip-status-closed{background:rgba(107,114,128,.2);color:#cbd5e1;border-color:rgba(107,114,128,.35)}
-.chip-type-bug{background:rgba(239,68,68,.15);color:#fca5a5;border-color:rgba(239,68,68,.3)}
-.chip-type-feature{background:rgba(59,130,246,.15);color:#93c5fd;border-color:rgba(59,130,246,.3)}
-.chip-type-enhancement{background:rgba(139,92,246,.15);color:#c4b5fd;border-color:rgba(139,92,246,.3)}
-.chip-type-misc{background:rgba(107,114,128,.15);color:#cbd5e1;border-color:rgba(107,114,128,.3)}
-.chip-prio-p0{background:rgba(239,68,68,.18);color:#fca5a5;border-color:rgba(239,68,68,.35)}
-.chip-prio-p1{background:rgba(245,158,11,.18);color:#fcd34d;border-color:rgba(245,158,11,.35)}
-.chip-prio-p2{background:rgba(59,130,246,.18);color:#93c5fd;border-color:rgba(59,130,246,.35)}
-.chip-prio-p3{background:rgba(107,114,128,.18);color:#cbd5e1;border-color:rgba(107,114,128,.35)}
-.chip-prio-none{background:#1a2540;color:var(--muted);border-color:var(--border)}
-.filter-bar{display:flex;gap:.5rem;margin-bottom:.85rem;flex-wrap:wrap}
-.filter-bar input,.filter-bar select{background:#0a1226;border:1px solid var(--border);color:var(--text);border-radius:.4rem;padding:.45rem .65rem;font-size:.85rem;outline:none;transition:border-color .15s}
-.filter-bar input:focus,.filter-bar select:focus{border-color:var(--accent)}
+# ---------------------------------------------------------------- stylesheet
+
+_STYLESHEET = """*{box-sizing:border-box}
+:root{
+  --bg:#ffffff;
+  --bg-subtle:#f6f8fa;
+  --bg-muted:#eaeef2;
+  --border:#d1d9e0;
+  --border-muted:#d1d9e0b3;
+  --fg:#1f2328;
+  --fg-muted:#59636e;
+  --accent:#0969da;
+  --accent-bg:#ddf4ff;
+  --open:#1a7f37;
+  --open-bg:#dafbe1;
+  --closed:#8250df;
+  --closed-bg:#fbefff;
+  --danger:#cf222e;
+  --warn:#9a6700;
+  --radius:6px;
+  --radius-sm:4px;
+}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg)}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  padding:0;
+}
+.page{max-width:1024px;margin:0 auto;padding:24px 24px 80px}
+.issue-page .page{max-width:860px}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code,kbd,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:.85em}
+.muted{color:var(--fg-muted)}
+h1,h2,h3,h4{margin:0;font-weight:600;line-height:1.25}
+
+/* ======== Index ======== */
+.masthead{padding:8px 0 16px;border-bottom:1px solid var(--border);margin-bottom:20px}
+.masthead .brand{font-size:24px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
+.masthead .byline{margin-top:6px;font-size:12px;color:var(--fg-muted)}
+.masthead .byline code{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1px 5px;color:var(--fg)}
+
+section{margin:24px 0}
+section h2{font-size:16px;font-weight:600;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border-muted)}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:0;padding:0}
+.stats .stat{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.stats dt{font-size:12px;color:var(--fg-muted);font-weight:500;margin:0}
+.stats dd{font-size:24px;font-weight:600;color:var(--fg);margin:2px 0 0;line-height:1.2}
+@media (max-width:680px){.stats{grid-template-columns:repeat(2,1fr)}}
+
+/* Composition */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+@media (max-width:680px){.two-col{grid-template-columns:1fr;gap:16px}}
+.block h3{font-size:12px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px}
+.count-row{display:grid;grid-template-columns:90px 1fr 32px;gap:10px;align-items:center;padding:3px 0;font-size:13px}
+.count-name{color:var(--fg)}
+.count-bar{height:8px;background:var(--bg-muted);border-radius:999px;overflow:hidden;position:relative}
+.count-bar-fill{display:block;height:100%;background:var(--accent);border-radius:999px}
+.count-num{text-align:right;color:var(--fg-muted);font-variant-numeric:tabular-nums;font-size:12px}
+
+/* Milestones */
+.milestones{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:4px 12px}
+.ms-details{padding:10px 0;border-bottom:1px solid var(--border-muted)}
+.ms-details:last-child{border-bottom:none}
+.ms-details summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:auto 1fr 200px auto;gap:12px;align-items:center;padding:2px 0}
+.ms-details summary::-webkit-details-marker{display:none}
+.ms-details summary::before{content:"▸";display:inline-block;width:10px;color:var(--fg-muted);font-size:10px;transition:transform .1s}
+.ms-details[open] summary::before{content:"▾"}
+.ms-name{font-weight:600;color:var(--fg)}
+.ms-progress{height:8px;background:var(--bg-muted);border-radius:999px;overflow:hidden;position:relative}
+.ms-progress-fill{display:block;height:100%;background:var(--open);border-radius:999px}
+.ms-stats{font-size:12px;color:var(--fg-muted);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:680px){.ms-details summary{grid-template-columns:auto 1fr;row-gap:4px}.ms-progress,.ms-stats{grid-column:2}}
+.ms-children{list-style:none;margin:8px 0 0;padding:0 0 0 18px;border-left:2px solid var(--bg-muted)}
+.ms-children li{padding:3px 0;font-size:13px}
+.ms-children a{color:var(--fg);text-decoration:none}
+.ms-children a:hover{color:var(--accent);text-decoration:underline}
+.ms-children .num{color:var(--fg-muted);margin-right:4px;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:.85em}
+.ms-children li.done a{text-decoration:line-through;color:var(--fg-muted)}
+
+/* Filter bar */
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.filter-bar input,.filter-bar select{
+  font:inherit;font-size:13px;color:var(--fg);background:var(--bg);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:5px 10px;outline:none;transition:border-color .1s,box-shadow .1s;
+}
+.filter-bar input:focus,.filter-bar select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
 .filter-bar input{flex:1;min-width:200px}
-.filter-bar select{min-width:130px}
-/* Issue page */
-.issue-page .container{padding:0}
-.issue-header{margin-bottom:1rem;align-items:center}
-.breadcrumb a{color:var(--muted);text-decoration:none;font-size:.85rem}
-.breadcrumb a:hover{color:var(--accent)}
-.nav-pair{display:flex;gap:.4rem}
-.nav-btn{display:inline-block;background:#0a1226;border:1px solid var(--border);color:var(--text);text-decoration:none;font-size:.85rem;padding:.35rem .7rem;border-radius:.4rem;transition:all .15s}
-.nav-btn:hover{border-color:var(--accent);color:#fff}
-.nav-btn.disabled{opacity:.35;cursor:not-allowed}
-.issue-title{font-size:1.6rem;color:#fff;font-weight:700;margin-bottom:.6rem;letter-spacing:-.01em;line-height:1.25}
-.badges{display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem}
-.meta{font-size:.85rem;color:var(--muted);display:grid;grid-template-columns:repeat(2,1fr);gap:.4rem .9rem;background:var(--panel);border:1px solid var(--border);border-radius:.6rem;padding:.85rem 1.1rem;margin-bottom:1rem}
-.meta b{color:var(--text);font-weight:500}
-.md-body{font-size:.95rem;line-height:1.65;color:var(--text)}
-.md-body.empty{color:var(--muted);font-style:italic}
-.md-body h1,.md-body h2,.md-body h3,.md-body h4{color:#fff;margin:1.2em 0 .5em;font-weight:600;line-height:1.25}
-.md-body h1{font-size:1.5rem;border-bottom:1px solid var(--border);padding-bottom:.3rem}
-.md-body h2{font-size:1.25rem;border-bottom:1px solid var(--border);padding-bottom:.25rem}
-.md-body h2::before{content:none}
-.md-body h3{font-size:1.08rem;color:#fff;text-transform:none;letter-spacing:0;margin:1.1em 0 .4em}
-.md-body h4{font-size:.98rem}
-.md-body p{margin:.6em 0}
-.md-body ul,.md-body ol{margin:.5em 0 .5em 1.6em}
-.md-body li{margin:.18em 0}
-.md-body code{background:#162243;color:#f5d0fe;padding:.12em .4em;border-radius:.25em;font-size:.88em;font-family:ui-monospace,Menlo,Consolas,monospace}
-.md-body pre{background:#06101f;border:1px solid var(--border);border-radius:.5rem;padding:.95rem 1.1rem;overflow-x:auto;margin:.8em 0}
-.md-body pre code{background:none;color:inherit;padding:0;font-size:.85em}
-.md-body blockquote{border-left:3px solid var(--accent);padding:.15em .9em;color:var(--muted);margin:.7em 0;background:#0d1730;border-radius:0 .3rem .3rem 0}
-.md-body a{color:var(--accent);text-decoration:none}
+.filter-bar select{min-width:130px;cursor:pointer}
+
+/* Open issue groups */
+.open-issues{display:flex;flex-direction:column;gap:18px}
+.prio-group h4.prio-label{font-size:12px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px;padding:0 4px}
+.prio-label.prio-p0{color:var(--danger)}
+.prio-label.prio-p1{color:var(--warn)}
+.prio-label.prio-p2{color:var(--accent)}
+.prio-label.prio-p3,.prio-label.prio-none{color:var(--fg-muted)}
+
+.issue-list{list-style:none;margin:0;padding:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)}
+.issue-list li{border-bottom:1px solid var(--border-muted)}
+.issue-list li:last-child{border-bottom:none}
+.row{
+  display:grid;grid-template-columns:14px 56px 1fr 110px 110px 100px;
+  gap:12px;align-items:center;padding:8px 14px;color:var(--fg);text-decoration:none;
+}
+.row:hover{background:var(--bg-subtle);text-decoration:none}
+.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%}
+.status-dot.status-open{background:var(--open)}
+.status-dot.status-closed{background:var(--closed)}
+.row .num{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:var(--fg-muted);font-size:12px;font-variant-numeric:tabular-nums}
+.row .title{font-size:14px;font-weight:500}
+.row .meta-cell{font-size:12px;color:var(--fg-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{
+  display:inline-block;background:var(--bg-subtle);color:var(--fg);
+  border:1px solid var(--border);border-radius:999px;
+  padding:0 8px;font-size:11px;font-weight:500;line-height:18px;margin-left:4px;
+}
+.closed-list .row{grid-template-columns:14px 56px 1fr 110px 100px}
+@media (max-width:680px){
+  .row{grid-template-columns:14px 1fr;row-gap:2px}
+  .row .num{display:none}
+  .row .meta-cell{grid-column:2;display:inline}
+  .row .meta-cell.when{display:none}
+}
+
+/* Footer */
+.colophon{margin-top:32px;padding-top:14px;border-top:1px solid var(--border-muted);font-size:12px;color:var(--fg-muted);text-align:center}
+
+/* ======== Issue page ======== */
+.topbar{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--fg-muted);padding:4px 0 14px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+.topbar .crumb{color:var(--accent);text-decoration:none;font-weight:500}
+.topbar .crumb:hover{text-decoration:underline}
+.topbar .sep{color:var(--border)}
+.topbar .proj{color:var(--fg)}
+.topbar .here{color:var(--fg-muted)}
+.topbar .spacer{flex:1}
+.topnav{display:flex;gap:6px}
+.nav-btn{
+  font-size:12px;padding:4px 10px;border:1px solid var(--border);
+  border-radius:var(--radius);text-decoration:none;color:var(--fg);background:var(--bg);
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.nav-btn:hover{background:var(--bg-subtle);text-decoration:none;border-color:var(--fg-muted)}
+.nav-btn.disabled{opacity:.4;cursor:not-allowed;background:var(--bg-subtle)}
+
+.issue-head{margin-bottom:18px}
+.issue-title{font-size:24px;font-weight:600;color:var(--fg);line-height:1.3}
+.issue-title .issue-num{color:var(--fg-muted);font-weight:400}
+.issue-sub{margin-top:8px;display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
+.state-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:3px 10px;border-radius:999px;border:1px solid transparent}
+.state-badge::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:currentColor}
+.state-badge.state-open{background:var(--open-bg);color:var(--open);border-color:transparent}
+.state-badge.state-closed{background:var(--closed-bg);color:var(--closed)}
+
+.meta-grid{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:0;margin:0 0 20px;
+  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
+}
+.m-row{display:flex;gap:12px;padding:8px 14px;font-size:13px;border-bottom:1px solid var(--border-muted)}
+.m-row:nth-last-child(-n+2){border-bottom:none}
+.m-row dt{flex:0 0 96px;color:var(--fg-muted);font-weight:500}
+.m-row dd{flex:1;color:var(--fg);margin:0}
+@media (max-width:680px){.meta-grid{grid-template-columns:1fr}.m-row:nth-last-child(-n+2){border-bottom:1px solid var(--border-muted)}.m-row:last-child{border-bottom:none}}
+
+.section-label{font-size:12px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.05em;margin:24px 0 10px}
+
+.body-section{margin-bottom:18px}
+.md-body{
+  font-size:15px;line-height:1.6;color:var(--fg);
+  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 20px;
+}
+.md-body.empty{color:var(--fg-muted);font-style:italic;background:var(--bg-subtle)}
+.md-body > *:first-child{margin-top:0}
+.md-body > *:last-child{margin-bottom:0}
+.md-body h1,.md-body h2,.md-body h3,.md-body h4{font-weight:600;color:var(--fg);margin:24px 0 12px;line-height:1.25}
+.md-body h1{font-size:1.7em;border-bottom:1px solid var(--border-muted);padding-bottom:.3em}
+.md-body h2{font-size:1.4em;border-bottom:1px solid var(--border-muted);padding-bottom:.25em}
+.md-body h3{font-size:1.2em}
+.md-body h4{font-size:1em}
+.md-body p{margin:0 0 14px}
+.md-body ul,.md-body ol{margin:0 0 14px;padding-left:24px}
+.md-body li{margin:4px 0}
+.md-body blockquote{margin:0 0 14px;padding:0 14px;border-left:3px solid var(--border);color:var(--fg-muted)}
+.md-body code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:85%;background:var(--bg-muted);padding:.2em .4em;border-radius:var(--radius-sm);
+}
+.md-body pre{
+  background:var(--bg-subtle);border:1px solid var(--border);
+  border-radius:var(--radius);padding:12px 14px;overflow-x:auto;margin:0 0 14px;
+}
+.md-body pre code{background:none;padding:0;font-size:85%}
+.md-body a{color:var(--accent)}
 .md-body a:hover{text-decoration:underline}
-.md-body table{width:auto;border:1px solid var(--border);margin:.7em 0;font-size:.88rem}
-.md-body th,.md-body td{padding:.4rem .7rem;border:1px solid var(--border)}
-.md-body th{background:#142042;text-transform:none;letter-spacing:0;font-size:.88rem}
-.md-body img{max-width:100%;border-radius:.4rem}
-.md-body hr{border:none;border-top:1px solid var(--border);margin:1em 0}
-.md-body input[type=checkbox]{margin-right:.4em}
-.link-list{list-style:none;padding:0;font-size:.9rem}
-.link-list li{padding:.25rem 0;border-bottom:1px dashed #1a2540}
-.link-list li:last-child{border:none}
+.md-body table{border-collapse:collapse;margin:0 0 14px;display:block;overflow-x:auto}
+.md-body th,.md-body td{border:1px solid var(--border);padding:6px 12px;font-size:13px}
+.md-body th{background:var(--bg-subtle);font-weight:600;text-align:left}
+.md-body img{max-width:100%}
+.md-body hr{border:none;border-top:1px solid var(--border);margin:18px 0}
+
+.aside-block{margin:24px 0}
+.aside-block h3{font-size:12px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px}
+.link-list{list-style:none;margin:0;padding:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.link-list li{padding:8px 14px;font-size:13px;border-bottom:1px solid var(--border-muted);display:flex;align-items:center;gap:10px}
+.link-list li:last-child{border-bottom:none}
 .link-list a{color:var(--accent);text-decoration:none}
 .link-list a:hover{text-decoration:underline}
-.link-list .ms-issue-closed a{color:var(--muted);text-decoration:line-through}
-.link-type{display:inline-block;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;background:#0a1226;border:1px solid var(--border);border-radius:.25rem;padding:1px 6px;margin-right:.5rem}
-.commands-grid{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}
-.cmd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;background:#0a1226;border:1px solid var(--border);border-radius:.35rem;padding:6px 10px;cursor:pointer;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all .15s}
-.cmd:hover{border-color:var(--accent);color:#fff}
-.cmd.copied{color:var(--ok);border-color:var(--ok)}
-.page-footer{font-size:.75rem;color:var(--muted);text-align:center;margin-top:2rem;padding-top:1rem;border-top:1px solid var(--border)}
+.link-list .link-type{display:inline-block;min-width:84px;color:var(--fg-muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+.link-list .done a{text-decoration:line-through;color:var(--fg-muted)}
+
+.cmd-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+@media (max-width:680px){.cmd-list{grid-template-columns:1fr}}
+.cmd{
+  display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+  background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--radius);
+  padding:6px 10px;cursor:pointer;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .1s;
+}
+.cmd::before{content:"$ ";color:var(--fg-muted)}
+.cmd:hover{background:var(--bg-muted);border-color:var(--fg-muted)}
+.cmd.copied{background:var(--open-bg);border-color:var(--open);color:var(--open)}
+.cmd.copied::before{color:var(--open)}
 """
