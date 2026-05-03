@@ -8,11 +8,14 @@ from . import main, _resolve, _require_init
 
 
 @main.command()
-@click.option("--output", "-o", default=None, help="Output HTML file path (default: dashboard.html in data dir)")
+@click.option(
+    "--output", "-o", default=None,
+    help="Output directory (default: <data-dir>/dashboard/)",
+)
 @click.option("--no-open", is_flag=True, help="Don't open browser after generating")
 @click.pass_context
 def dashboard(ctx, output, no_open):
-    """Generate a local HTML dashboard."""
+    """Generate a multi-page HTML dashboard snapshot."""
     import webbrowser
 
     from ..dashboard import generate_dashboard
@@ -21,12 +24,11 @@ def dashboard(ctx, output, no_open):
     _require_init(root)
 
     project_name = ctx.obj.get("project") or ""
-    html = generate_dashboard(root, project_name=project_name)
+    output_dir = Path(output) if output else root / "dashboard"
 
-    output_path = Path(output) if output else root / "dashboard.html"
-    output_path.write_text(html, encoding="utf-8")
+    index_path = generate_dashboard(root, output_dir=output_dir, project_name=project_name)
 
     if not no_open:
-        webbrowser.open(str(output_path))
+        webbrowser.open(index_path.as_uri())
 
-    click.echo(f"Dashboard generated: {output_path}")
+    click.echo(f"Dashboard generated: {index_path}")
